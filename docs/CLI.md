@@ -173,6 +173,8 @@ mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout
 - **Image inputs**: one page, sized to pixel dimensions at 72 DPI (1px = 1pt).
 - **stdin** (`-`) requires an explicit `-o` (no filename to derive a name from).
 
+For image inputs, `--image-quality <0–1>` re-encodes the visible image layer at that quality before placing the invisible text layer. OCR still runs against the original full-resolution decoded image, so this does not lower recognition quality. PDF inputs are not recompressed.
+
 When **no** page needs OCR — a fully born-digital PDF — the input is copied through **byte-for-byte**: annotations (links, form fields), outlines, and metadata are all preserved, and the output is identical to the input. When at least one page needs OCR, the whole document is rewritten: page content (vector text, images) is preserved, but annotations, outlines, and document metadata are **not** carried over. Keep born-digital PDFs with fillable forms or heavy linking out of `searchable-pdf` unless you need the rewrite.
 
 The "already has text" check is page-level: a scanned page carrying one small digital element (a Bates stamp, fax header, or page number) counts as born-digital and is skipped, leaving its scanned body unsearchable. Two caveats:
@@ -191,7 +193,7 @@ The "already has text" check is page-level: a scanned page carrying one small di
 | `-` | single input → stdout (refused on a terminal) |
 | fixed path or `-`, with ≥2 inputs | error — use a directory or `[name]` template |
 
-Also accepts `--ocr-all-pages` (above) and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
+Also accepts `--ocr-all-pages` (above), `--image-quality <0–1>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
 
 ### Progress and status
 

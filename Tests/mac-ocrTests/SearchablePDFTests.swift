@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PDFKit
 import Testing
@@ -11,11 +12,12 @@ import Testing
 		.file(fixtures.appendingPathComponent(name).path)
 	}
 
-	private func render(_ name: String, pdfDpi: Int? = nil) async throws -> PDFDocument {
+	private func render(_ name: String, pdfDpi: Int? = nil, imageQuality: Double? = nil) async throws -> PDFDocument {
 		let data = try await SearchablePDF.render(
 			source: Self.source(name),
 			options: OCROptions(),
-			pdfDpi: pdfDpi
+			pdfDpi: pdfDpi,
+			imageQuality: imageQuality
 		)
 		guard let document = PDFDocument(data: data) else {
 			throw MessageError("output was not a valid PDF")
@@ -98,5 +100,72 @@ import Testing
 		let bounds = try #require(document.page(at: 0)).bounds(for: .mediaBox)
 		#expect(Int(bounds.width) == 400)
 		#expect(Int(bounds.height) == 100)
+	}
+
+	@Test func imageQualityKeepsSearchableTextAndPageSize() async throws {
+		let document = try await render("hello.png", imageQuality: 0.6)
+		#expect(document.pageCount == 1)
+		#expect(text(document).contains("Hello World"))
+		let bounds = try #require(document.page(at: 0)).bounds(for: .mediaBox)
+		#expect(Int(bounds.width) == 400)
+		#expect(Int(bounds.height) == 100)
+	}
+
+	@Test func imageQualityAvoidsRawBitmapSizedOutput() async throws {
+		let directory = try InputMatrixSupport.makeTempDir("spdf-quality")
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let path = directory + "/noisy.jpg"
+		let image = makeNoisyImage(width: 800, height: 600)
+		try InputMatrixSupport.write(image, to: path, type: .jpeg)
+
+		let highQuality = try await SearchablePDF.render(
+			source: .file(path),
+			options: OCROptions(),
+			pdfDpi: nil,
+			imageQuality: 0.9
+		)
+		let lowQuality = try await SearchablePDF.render(
+			source: .file(path),
+			options: OCROptions(),
+			pdfDpi: nil,
+			imageQuality: 0.25
+		)
+
+		let rawRGBBytes = image.width * image.height * 3
+		#expect(
+			highQuality.count < rawRGBBytes / 2,
+			"expected compressed image PDF to be far smaller than raw RGB (\(highQuality.count) vs \(rawRGBBytes))"
+		)
+		#expect(
+			lowQuality.count < highQuality.count,
+			"expected lower image quality to reduce output size (\(lowQuality.count) vs \(highQuality.count))"
+		)
+	}
+
+	private func makeNoisyImage(width: Int, height: Int) -> CGImage {
+		let bytesPerPixel = 4
+		let bytesPerRow = width * bytesPerPixel
+		var data = [UInt8](repeating: 255, count: height * bytesPerRow)
+		for y in 0..<height {
+			for x in 0..<width {
+				let offset = y * bytesPerRow + x * bytesPerPixel
+				let value = UInt8((x * 31 + y * 17 + (x * y) % 251) % 256)
+				data[offset] = value
+				data[offset + 1] = UInt8(255 - Int(value))
+				data[offset + 2] = UInt8((Int(value) * 7) % 256)
+			}
+		}
+		return data.withUnsafeMutableBytes { bytes in
+			let context = CGContext(
+				data: bytes.baseAddress,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: bytesPerRow,
+				space: CGColorSpaceCreateDeviceRGB(),
+				bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+			)!
+			return context.makeImage()!
+		}
 	}
 }

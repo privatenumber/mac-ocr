@@ -41,6 +41,12 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	)
 	var ocrAllPages = false
 
+	@Option(
+		name: .long,
+		help: "Visible image layer quality for image inputs (0.0–1.0). OCR still uses the original full-resolution image. PDF inputs are not recompressed."
+	)
+	var imageQuality: Double?
+
 	@OptionGroup var recognition: RecognitionOptions
 
 	@Option(name: .long, help: "PDF rendering DPI for OCR: 'auto' (default) or an integer 72–600.")
@@ -51,6 +57,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 
 	public func validate() throws {
 		try validatePdfDpi()
+		try imageQuality?.requireUnitInterval(name: "--image-quality")
 		if let roi {
 			_ = try parseRegionOfInterest(roi)
 		}
@@ -75,6 +82,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			let data = try await SearchablePDF.render(
 				source: sources[0], options: options, pdfDpi: pdfDpi, password: pdfPassword,
 				ocrAllPages: ocrAllPages,
+				imageQuality: imageQuality,
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -97,6 +105,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				let data = try await SearchablePDF.render(
 					source: source, options: options, pdfDpi: pdfDpi, password: pdfPassword,
 					ocrAllPages: ocrAllPages,
+					imageQuality: imageQuality,
 					onProgress: { reporter.update(done: $0, total: $1) }
 				)
 				let path = try resolveOutputPath(

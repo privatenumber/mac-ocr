@@ -13,6 +13,16 @@ extension Float {
 	}
 }
 
+extension Double {
+	/// Throw a `ValidationError` if the value is not a finite number in
+	/// `[0.0, 1.0]`.
+	func requireUnitInterval(name: String) throws {
+		guard isFinite, self >= 0.0, self <= 1.0 else {
+			throw ValidationError("\(name) must be between 0.0 and 1.0")
+		}
+	}
+}
+
 /// Shared input-source resolution: map file arguments to `ImageSource`s, and
 /// fall back to stdin when no files are given and stdin is piped (not a TTY).
 func resolveImageSources(files: [String]) -> [ImageSource] {

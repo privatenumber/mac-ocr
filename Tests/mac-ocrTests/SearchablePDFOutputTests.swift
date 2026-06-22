@@ -81,6 +81,17 @@ import Testing
 		#expect(result.stdoutData.prefix(5) == Data("%PDF-".utf8))
 	}
 
+	@Test func imageQualityOutsideUnitIntervalErrors() throws {
+		let result = try TestSupport.run([
+			"searchable-pdf",
+			TestSupport.fixturePath("hello.png"),
+			"--image-quality",
+			"1.5",
+		])
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("--image-quality must be between 0.0 and 1.0"))
+	}
+
 	@Test func batchContinuesAfterAFailedInput() throws {
 		// Fail-soft: a bad input is reported but does not abort the batch, so a
 		// good input listed *after* it is still written. Exit is non-zero.

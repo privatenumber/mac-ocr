@@ -122,6 +122,7 @@ Both OCR and `searchable-pdf` accept the recognition options:
 |------|--------|
 | `-o, --output <dest>` | Output path, `[name]` template, directory, or `-` for stdout. Default: `[name].ocr.pdf` next to each input. |
 | `--ocr-all-pages` | OCR every page, including pages that already have selectable text (skipped by default) |
+| `--image-quality <0–1>` | Visible image layer quality for image inputs. OCR still uses the original full-resolution image; PDF inputs are not recompressed. |
 
 List the recognition languages available on your macOS version with `mac-ocr languages` (add `--fast` for the fast recognizer's set).
 

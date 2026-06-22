@@ -19,6 +19,9 @@ export const createSearchablePdf = async (
 	if (options?.ocrAllPages) {
 		args.push('--ocr-all-pages');
 	}
+	if (options?.imageQuality !== undefined) {
+		args.push('--image-quality', String(options.imageQuality));
+	}
 	args.push('-o', '-', '-');
 	const stdout = await collectStdout(
 		spawnBinary(args, {

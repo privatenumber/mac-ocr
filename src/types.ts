@@ -117,4 +117,10 @@ export type SearchablePdfOptions = CommonOptions & {
 	 * twice in copy/search.
 	 */
 	ocrAllPages?: boolean;
+
+	/**
+	 * Visible image layer quality for image inputs (`0`–`1`). OCR still uses the
+	 * original full-resolution image. PDF inputs are not recompressed.
+	 */
+	imageQuality?: number;
 };

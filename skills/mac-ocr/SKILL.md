@@ -101,6 +101,7 @@ mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout (refused o
 - **Fully born-digital PDFs pass through byte-for-byte** (annotations/links/forms/outlines preserved). When any page needs OCR, the rewrite preserves page content but **not** annotations, outlines, or metadata.
 - **`--ocr-all-pages`** overrides that skip and OCRs every page — needed for hybrid pages (a scan plus a small digital stamp/page number, which counts as "has text"); existing digital text may then appear twice in copy/search.
 - **Image inputs** become one page, sized to pixel dimensions (1px = 1pt).
+- **`--image-quality <0–1>`** controls the visible image layer for image inputs only. OCR still uses the original full-resolution image; PDF inputs are not recompressed.
 - Accepts the same recognition options as OCR (`--fast`, `-l`, `-c`, `--pdf-dpi`, `--roi`, `--password`, custom words, etc.).
 - Status is **interactive-only** on stderr: a live `[page/total]` counter + `name → path` line on a terminal; piped runs are silent on success (errors only) — no quiet flag needed. stdout stays clean for `-o -`. The `ocr` command shows the same counter when results aren't streaming to the terminal.
 
@@ -128,7 +129,7 @@ const langs = await supportedLanguages()                  // → string[] (ocr +
 ```
 
 - `ocr()` throws if given a multi-page PDF — use `ocr.pages()`.
-- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `password`, `signal` (AbortSignal).
+- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `imageQuality` (searchable PDF only), `password`, `signal` (AbortSignal).
 - Failures throw `MacOcrError` with `.kind` (`'usage'`, `'runtime'`, `'unavailable'`, …) and `.stderr`.
 
 ## Patterns

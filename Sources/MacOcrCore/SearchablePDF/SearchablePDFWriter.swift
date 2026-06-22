@@ -42,9 +42,11 @@ public enum SearchablePDF {
 		pdfDpi: Int?,
 		password: String? = nil,
 		ocrAllPages: Bool = false,
+		imageQuality: Double? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
-		let producer = try await resolveProducer(source, password: password)
+		try validateImageQuality(imageQuality)
+		let producer = try await resolveProducer(source, password: password, imageQuality: imageQuality)
 
 		if case .pdf(let document, _, let originalData) = producer, !ocrAllPages {
 			let pageCount = document.numberOfPages
@@ -99,7 +101,14 @@ public enum SearchablePDF {
 		/// verbatim pass-through when no page needs OCR.
 		case pdf(document: CGPDFDocument, reopen: () -> CGPDFDocument?, originalData: () -> Data?)
 		/// A single, orientation-corrected (upright) raster image.
-		case image(CGImage)
+		case image(ImagePage)
+	}
+
+	private struct ImagePage {
+		let image: CGImage
+		let visiblePDFData: Data
+		let visiblePDFDocument: CGPDFDocument
+		let visiblePDFPage: CGPDFPage
 	}
 
 	/// Per-page geometry and OCR decision, computed serially up front on the
@@ -246,19 +255,28 @@ public enum SearchablePDF {
 			}
 			return pageCount
 
-		case .image(let image):
+		case .image(let page):
 			onProgress?(0, 1)
+			let image = page.image
 			let mediaBox = CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height))
 			let ocr = try await recognize(image, options: options)
 			writePage(mediaBox: mediaBox, ocr: ocr, into: context) { context in
-				context.draw(image, in: mediaBox)
+				context.concatenate(
+					page.visiblePDFPage.getDrawingTransform(
+						.cropBox, rect: mediaBox, rotate: 0, preserveAspectRatio: false
+					))
+				context.drawPDFPage(page.visiblePDFPage)
 			}
 			onProgress?(1, 1)
 			return 1
 		}
 	}
 
-	private static func resolveProducer(_ source: ImageSource, password: String?) async throws -> PageProducer {
+	private static func resolveProducer(
+		_ source: ImageSource,
+		password: String?,
+		imageQuality: Double?
+	) async throws -> PageProducer {
 		switch source {
 		case .file(let path):
 			let url = URL(fileURLWithPath: path)
@@ -279,30 +297,34 @@ public enum SearchablePDF {
 					},
 					originalData: { try? Data(contentsOf: url) })
 			}
-			guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-				let image = uprightImage(from: source)
+			guard let source = CGImageSourceCreateWithURL(url as CFURL, nil)
 			else {
 				throw MessageError("Cannot read image: \(path)")
 			}
-			return .image(image)
+			return .image(try imagePage(from: source, label: path, imageQuality: imageQuality))
 
 		case .url(let urlString):
 			guard let remoteURL = URL(string: urlString) else {
 				throw MessageError("Invalid URL: \(urlString)")
 			}
 			let data = try await fetchRemoteData(from: remoteURL, label: urlString)
-			return try producer(fromData: data, label: urlString, password: password)
+			return try producer(fromData: data, label: urlString, password: password, imageQuality: imageQuality)
 
 		case .stdin:
 			let data = try readAllStandardInput()
 			guard !data.isEmpty else {
 				throw MessageError("No data received on stdin")
 			}
-			return try producer(fromData: data, label: "stdin", password: password)
+			return try producer(fromData: data, label: "stdin", password: password, imageQuality: imageQuality)
 		}
 	}
 
-	private static func producer(fromData data: Data, label: String, password: String?) throws -> PageProducer {
+	private static func producer(
+		fromData data: Data,
+		label: String,
+		password: String?,
+		imageQuality: Double?
+	) throws -> PageProducer {
 		if isPDFData(data) {
 			guard let provider = CGDataProvider(data: data as CFData),
 				let document = CGPDFDocument(provider)
@@ -321,12 +343,122 @@ public enum SearchablePDF {
 				},
 				originalData: { data })
 		}
-		guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-			let image = uprightImage(from: source)
+		guard let source = CGImageSourceCreateWithData(data as CFData, nil)
 		else {
 			throw MessageError("Cannot read image from \(label)")
 		}
-		return .image(image)
+		return .image(try imagePage(from: source, label: label, imageQuality: imageQuality))
+	}
+
+	private static func validateImageQuality(_ value: Double?) throws {
+		guard let value else { return }
+		guard value.isFinite, value >= 0, value <= 1 else {
+			throw MessageError("--image-quality must be between 0.0 and 1.0")
+		}
+	}
+
+	private static func imagePage(
+		from source: CGImageSource,
+		label: String,
+		imageQuality: Double?
+	) throws -> ImagePage {
+		guard let image = uprightImage(from: source) else {
+			throw MessageError("Cannot read image from \(label)")
+		}
+		let visibleImage = imageQuality == nil ? image : flattenOverWhite(image)
+		let data = try makeVisibleImagePDF(image: visibleImage, imageQuality: imageQuality)
+		guard let provider = CGDataProvider(data: data as CFData),
+			let document = CGPDFDocument(provider),
+			let page = document.page(at: 1)
+		else {
+			throw MessageError("Could not create PDF image layer for \(label)")
+		}
+		return ImagePage(
+			image: image,
+			visiblePDFData: data,
+			visiblePDFDocument: document,
+			visiblePDFPage: page
+		)
+	}
+
+	private static func makeVisibleImagePDF(image: CGImage, imageQuality: Double?) throws -> Data {
+		let data = NSMutableData()
+		guard
+			let destination = CGImageDestinationCreateWithData(
+				data as CFMutableData,
+				"com.adobe.pdf" as CFString,
+				1,
+				nil
+			)
+		else {
+			throw MessageError("Could not create PDF image destination")
+		}
+
+		let properties: [CFString: Any] = [
+			kCGImagePropertyDPIWidth: 72,
+			kCGImagePropertyDPIHeight: 72,
+		]
+		if let imageQuality {
+			let jpegData = try encodeJPEG(image: image, quality: imageQuality)
+			guard let source = CGImageSourceCreateWithData(jpegData as CFData, nil) else {
+				throw MessageError("Could not read compressed image layer")
+			}
+			CGImageDestinationAddImageFromSource(destination, source, 0, properties as CFDictionary)
+		} else {
+			CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+		}
+		guard CGImageDestinationFinalize(destination) else {
+			throw MessageError("Could not encode PDF image layer")
+		}
+		return data as Data
+	}
+
+	private static func encodeJPEG(image: CGImage, quality: Double) throws -> Data {
+		let data = NSMutableData()
+		guard
+			let destination = CGImageDestinationCreateWithData(
+				data as CFMutableData,
+				"public.jpeg" as CFString,
+				1,
+				nil
+			)
+		else {
+			throw MessageError("Could not create compressed image destination")
+		}
+		let properties: [CFString: Any] = [
+			kCGImageDestinationLossyCompressionQuality: quality,
+			kCGImagePropertyDPIWidth: 72,
+			kCGImagePropertyDPIHeight: 72,
+		]
+		CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+		guard CGImageDestinationFinalize(destination) else {
+			throw MessageError("Could not encode compressed image layer")
+		}
+		return data as Data
+	}
+
+	private static func flattenOverWhite(_ image: CGImage) -> CGImage {
+		guard image.alphaInfo != .none, image.alphaInfo != .noneSkipLast, image.alphaInfo != .noneSkipFirst else {
+			return image
+		}
+		guard
+			let context = CGContext(
+				data: nil,
+				width: image.width,
+				height: image.height,
+				bitsPerComponent: 8,
+				bytesPerRow: 0,
+				space: CGColorSpaceCreateDeviceRGB(),
+				bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+			)
+		else {
+			return image
+		}
+		let rect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+		context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+		context.fill(rect)
+		context.draw(image, in: rect)
+		return context.makeImage() ?? image
 	}
 
 	/// Decode a full-resolution, EXIF-orientation-corrected (upright) image.
