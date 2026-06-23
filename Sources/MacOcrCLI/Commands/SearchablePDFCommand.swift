@@ -260,7 +260,11 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	}
 
 	private func debugSidecarURL(forPDFPath path: String) -> URL {
-		URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("jsonl")
+		URL(fileURLWithPath: normalizedFilePath(path)).deletingPathExtension().appendingPathExtension("jsonl")
+	}
+
+	private func normalizedFilePath(_ path: String) -> String {
+		URL(fileURLWithPath: path).standardizedFileURL.path
 	}
 
 	private func removeTempDebugOutput(_ debugOutput: DebugOutput) {
@@ -386,7 +390,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			} catch let error as MessageError {
 				throw ValidationError(error.message)
 			}
-			pdfPaths.append(path)
+			pdfPaths.append(normalizedFilePath(path))
 		}
 
 		let pdfPathSet = Set(pdfPaths)
@@ -406,7 +410,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	private func validateDebugSidecarDoesNotReplacePDF(_ path: String) throws {
 		guard debugEnabled else { return }
 		let sidecarPath = debugSidecarURL(forPDFPath: path).path
-		if sidecarPath == path {
+		if sidecarPath == normalizedFilePath(path) {
 			throw ValidationError("MAC_OCR_DEBUG=1 sidecar '\(sidecarPath)' would overwrite the PDF output. Use a .pdf output path.")
 		}
 	}
