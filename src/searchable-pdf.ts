@@ -2,19 +2,7 @@ import { buildArgs } from './args.ts';
 import { collectStdout, spawnBinary } from './process.ts';
 import type { Input, SearchablePdfOptions } from './types.ts';
 
-/**
- * Produce a searchable PDF from image or PDF bytes — the same content with an
- * invisible, selectable OCR text layer added. Returns the PDF bytes.
- *
- * ```ts
- * const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'))
- * await fs.writeFile('scan.ocr.pdf', pdf)
- * ```
- */
-export const createSearchablePdf = async (
-	input: Input,
-	options?: SearchablePdfOptions,
-): Promise<Uint8Array> => {
+const buildSearchablePdfArgs = (options?: SearchablePdfOptions): string[] => {
 	const args = ['searchable-pdf', ...buildArgs(options)];
 	if (options?.ocrAllPages) {
 		args.push('--ocr-all-pages');
@@ -29,8 +17,24 @@ export const createSearchablePdf = async (
 		args.push('--image-downsample-dpi', String(options.imageDownsampleDpi));
 	}
 	args.push('-o', '-', '-');
+	return args;
+};
+
+/**
+ * Produce a searchable PDF from image or PDF bytes — the same content with an
+ * invisible, selectable OCR text layer added. Returns the PDF bytes.
+ *
+ * ```ts
+ * const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'))
+ * await fs.writeFile('scan.ocr.pdf', pdf)
+ * ```
+ */
+export const createSearchablePdf = async (
+	input: Input,
+	options?: SearchablePdfOptions,
+): Promise<Uint8Array> => {
 	const stdout = await collectStdout(
-		spawnBinary(args, {
+		spawnBinary(buildSearchablePdfArgs(options), {
 			input,
 			signal: options?.signal,
 			password: options?.password,
