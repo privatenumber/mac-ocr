@@ -206,6 +206,20 @@ import Testing
 		#expect(result.stderr.contains("MAC_OCR_DEBUG=1 requires file PDF output"))
 	}
 
+	@Test func debugRejectsSidecarCollidingWithPDFOutput() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let output = directory + "/out.jsonl"
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", output, TestSupport.fixturePath("hello.png")],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("would overwrite a PDF output"))
+		#expect(!FileManager.default.fileExists(atPath: output))
+	}
+
 	@Test func debugBornDigitalPdfWritesSkippedPageRecords() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }

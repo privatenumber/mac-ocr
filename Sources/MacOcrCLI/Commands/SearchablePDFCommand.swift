@@ -252,12 +252,15 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 
 	private func debugOutput(forPDFPath path: String) -> DebugOutput? {
 		guard debugEnabled else { return nil }
-		let pdfURL = URL(fileURLWithPath: path)
-		let finalURL = pdfURL.deletingPathExtension().appendingPathExtension("jsonl")
+		let finalURL = debugSidecarURL(forPDFPath: path)
 		let tempURL = finalURL.deletingLastPathComponent().appendingPathComponent(
 			".\(finalURL.lastPathComponent).\(UUID().uuidString).tmp"
 		)
 		return DebugOutput(finalURL: finalURL, tempURL: tempURL)
+	}
+
+	private func debugSidecarURL(forPDFPath path: String) -> URL {
+		URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("jsonl")
 	}
 
 	private func removeTempDebugOutput(_ debugOutput: DebugOutput) {
@@ -326,6 +329,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		}
 		try validateOutputModeSupportsSources(mode, files: files)
 		try validateNoOutputCollisions(mode: mode)
+		try validateNoDebugOutputCollisions(mode: mode)
 	}
 
 	private func validateMergedOutputRouting() throws {
@@ -353,6 +357,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		}
 		switch mode {
 		case .static:
+			try validateDebugSidecarDoesNotReplacePDF(output)
 			return
 		case .directory:
 			throw ValidationError("`--merge` writes one PDF and does not support directory output. Pass -o <file.pdf> or -o -.")
@@ -360,6 +365,49 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			throw ValidationError("`--merge` writes one PDF and does not support output templates. Pass -o <file.pdf> or -o -.")
 		case .off:
 			preconditionFailure("parseOutputValue never returns .off")
+		}
+	}
+
+	private func validateNoDebugOutputCollisions(mode: OutputMode) throws {
+		guard debugEnabled else { return }
+		let sources = resolveInputSources()
+		var pdfPaths: [String] = []
+		pdfPaths.reserveCapacity(sources.count)
+		for source in sources {
+			let path: String
+			do {
+				path = try resolveOutputPath(
+					mode: mode,
+					sourcePath: outputSourcePath(for: source),
+					page: 1,
+					pageCount: 1,
+					outputExtension: ".pdf"
+				)
+			} catch let error as MessageError {
+				throw ValidationError(error.message)
+			}
+			pdfPaths.append(path)
+		}
+
+		let pdfPathSet = Set(pdfPaths)
+		var sidecarPaths: Set<String> = []
+		for path in pdfPaths {
+			let sidecarPath = debugSidecarURL(forPDFPath: path).path
+			if sidecarPath == path || pdfPathSet.contains(sidecarPath) {
+				throw ValidationError("MAC_OCR_DEBUG=1 sidecar '\(sidecarPath)' would overwrite a PDF output. Use a .pdf output path.")
+			}
+			if sidecarPaths.contains(sidecarPath) {
+				throw ValidationError("MAC_OCR_DEBUG=1 produces duplicate sidecar output '\(sidecarPath)'. Use distinct PDF output paths.")
+			}
+			sidecarPaths.insert(sidecarPath)
+		}
+	}
+
+	private func validateDebugSidecarDoesNotReplacePDF(_ path: String) throws {
+		guard debugEnabled else { return }
+		let sidecarPath = debugSidecarURL(forPDFPath: path).path
+		if sidecarPath == path {
+			throw ValidationError("MAC_OCR_DEBUG=1 sidecar '\(sidecarPath)' would overwrite the PDF output. Use a .pdf output path.")
 		}
 	}
 
