@@ -83,6 +83,18 @@ public struct WordBox: Sendable {
 	}
 }
 
+public struct ObservationSource: Sendable {
+	public let pass: String
+	public let tile: BoundingBox?
+	public let edgeTouching: Bool
+
+	public init(pass: String, tile: BoundingBox? = nil, edgeTouching: Bool = false) {
+		self.pass = pass
+		self.tile = tile
+		self.edgeTouching = edgeTouching
+	}
+}
+
 public struct Observation: Encodable, Sendable {
 	public let text: String
 	public let confidence: Float
@@ -97,6 +109,8 @@ public struct Observation: Encodable, Sendable {
 	/// Per-word geometry for the top candidate. Deliberately excluded from
 	/// the encoded schema; empty when Vision couldn't provide ranges.
 	public let words: [WordBox]
+	/// Internal/debug origin. Deliberately excluded from the normal JSON schema.
+	public let source: ObservationSource?
 
 	private enum CodingKeys: String, CodingKey {
 		case text, confidence, requestRevision, boundingBox, candidates
@@ -119,7 +133,8 @@ public struct Observation: Encodable, Sendable {
 		requestRevision: Int,
 		boundingBox: BoundingBox,
 		candidates: [TextCandidate],
-		words: [WordBox] = []
+		words: [WordBox] = [],
+		source: ObservationSource? = nil
 	) {
 		self.text = text
 		self.confidence = confidence
@@ -127,6 +142,7 @@ public struct Observation: Encodable, Sendable {
 		self.boundingBox = boundingBox
 		self.candidates = candidates
 		self.words = words
+		self.source = source
 	}
 }
 

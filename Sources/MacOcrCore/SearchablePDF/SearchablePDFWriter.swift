@@ -418,6 +418,9 @@ public enum SearchablePDF {
 		let boundingBox: BoundingBox
 		let candidates: [TextCandidate]
 		let words: [DebugWord]
+		let sourcePass: String
+		let tile: BoundingBox?
+		let edgeTouching: Bool
 
 		init(observation: Observation) {
 			text = observation.text
@@ -426,6 +429,9 @@ public enum SearchablePDF {
 			boundingBox = observation.boundingBox
 			candidates = observation.candidates
 			words = observation.words.map(DebugWord.init(word:))
+			sourcePass = observation.source?.pass ?? "full"
+			tile = observation.source?.tile
+			edgeTouching = observation.source?.edgeTouching ?? false
 		}
 	}
 
@@ -1145,10 +1151,165 @@ public enum SearchablePDF {
 			options.includeWordGeometry = true
 			return options
 		}()
-		let session = VisionSession(image: image, orientation: .up)
-		return try await VisionRuntime.shared.run(session) { session in
-			try recognizeText(in: session, options: wordOptions)
+		guard tiledOCREnabled else {
+			return try await recognize(image, options: wordOptions, source: ObservationSource(pass: "full"))
 		}
+		return try await recognizeTiled(image, options: wordOptions)
+	}
+
+	private static var tiledOCREnabled: Bool {
+		guard let value = ProcessInfo.processInfo.environment["MAC_OCR_TILED"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+			!value.isEmpty
+		else {
+			return false
+		}
+		switch value.lowercased() {
+		case "0", "false", "no", "off":
+			return false
+		default:
+			return true
+		}
+	}
+
+	private static func recognize(_ image: CGImage, options: OCROptions, source: ObservationSource) async throws -> OCRResult {
+		let session = VisionSession(image: image, orientation: .up)
+		let result = try await VisionRuntime.shared.run(session) { session in
+			try recognizeText(in: session, options: options)
+		}
+		return withSource(source, result: result)
+	}
+
+	private static func recognizeTiled(_ image: CGImage, options: OCROptions) async throws -> OCRResult {
+		var observations = try await recognize(image, options: options, source: ObservationSource(pass: "full")).observations
+		for tile in ocrTiles {
+			guard let tileImage = crop(image, to: tile) else { continue }
+			let localResult = try await recognize(
+				tileImage,
+				options: options,
+				source: ObservationSource(pass: "tile", tile: tile, edgeTouching: false)
+			)
+			for observation in localResult.observations {
+				let remapped = remap(observation, from: tile)
+				guard shouldAcceptTileObservation(remapped) else { continue }
+				merge(remapped, into: &observations)
+			}
+		}
+		let sorted = observations.sorted { lhs, rhs in
+			if abs(lhs.boundingBox.y - rhs.boundingBox.y) > 0.01 {
+				return lhs.boundingBox.y < rhs.boundingBox.y
+			}
+			return lhs.boundingBox.x < rhs.boundingBox.x
+		}
+		return OCRResult(text: sorted.map(\.text).joined(separator: "\n"), observations: sorted)
+	}
+
+	private static let ocrTiles: [BoundingBox] = [
+		BoundingBox(x: 0, y: 0, width: 0.6, height: 0.6),
+		BoundingBox(x: 0.4, y: 0, width: 0.6, height: 0.6),
+		BoundingBox(x: 0, y: 0.4, width: 0.6, height: 0.6),
+		BoundingBox(x: 0.4, y: 0.4, width: 0.6, height: 0.6),
+	]
+
+	private static func crop(_ image: CGImage, to tile: BoundingBox) -> CGImage? {
+		let rect = CGRect(
+			x: CGFloat(tile.x) * CGFloat(image.width),
+			y: CGFloat(tile.y) * CGFloat(image.height),
+			width: CGFloat(tile.width) * CGFloat(image.width),
+			height: CGFloat(tile.height) * CGFloat(image.height)
+		).integral
+		return image.cropping(to: rect)
+	}
+
+	private static func withSource(_ source: ObservationSource, result: OCRResult) -> OCRResult {
+		let observations = result.observations.map { observation in
+			Observation(
+				text: observation.text,
+				confidence: observation.confidence,
+				requestRevision: observation.requestRevision,
+				boundingBox: observation.boundingBox,
+				candidates: observation.candidates,
+				words: observation.words,
+				source: source
+			)
+		}
+		return OCRResult(text: observations.map(\.text).joined(separator: "\n"), observations: observations)
+	}
+
+	private static func remap(_ observation: Observation, from tile: BoundingBox) -> Observation {
+		let box = remap(observation.boundingBox, from: tile)
+		let words = observation.words.map { word in
+			WordBox(text: word.text, boundingBox: remap(word.boundingBox, from: tile))
+		}
+		let edgeTouching = touchesEdge(observation.boundingBox)
+		return Observation(
+			text: observation.text,
+			confidence: observation.confidence,
+			requestRevision: observation.requestRevision,
+			boundingBox: box,
+			candidates: observation.candidates,
+			words: words,
+			source: ObservationSource(pass: "tile", tile: tile, edgeTouching: edgeTouching)
+		)
+	}
+
+	private static func remap(_ box: BoundingBox, from tile: BoundingBox) -> BoundingBox {
+		BoundingBox(
+			x: tile.x + box.x * tile.width,
+			y: tile.y + box.y * tile.height,
+			width: box.width * tile.width,
+			height: box.height * tile.height
+		)
+	}
+
+	private static func touchesEdge(_ box: BoundingBox) -> Bool {
+		let threshold = 0.02
+		return box.x <= threshold
+			|| box.y <= threshold
+			|| box.x + box.width >= 1 - threshold
+			|| box.y + box.height >= 1 - threshold
+	}
+
+	private static func merge(_ observation: Observation, into observations: inout [Observation]) {
+		guard let index = observations.firstIndex(where: { isDuplicate($0, observation) }) else {
+			observations.append(observation)
+			return
+		}
+		if score(observation) > score(observations[index]) {
+			observations[index] = observation
+		}
+	}
+
+	private static func shouldAcceptTileObservation(_ observation: Observation) -> Bool {
+		guard observation.source?.pass == "tile" else { return true }
+		let text = observation.text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard text.count > 1 else { return false }
+		guard observation.source?.edgeTouching != true else { return false }
+		return observation.confidence >= 0.3
+	}
+
+	private static func isDuplicate(_ lhs: Observation, _ rhs: Observation) -> Bool {
+		guard intersectionOverUnion(lhs.boundingBox, rhs.boundingBox) >= 0.5 else { return false }
+		return lhs.text == rhs.text || lhs.text.contains(rhs.text) || rhs.text.contains(lhs.text)
+	}
+
+	private static func score(_ observation: Observation) -> Double {
+		var score = Double(observation.confidence)
+		if observation.source?.pass == "full" { score += 0.05 }
+		if observation.source?.edgeTouching == true { score -= 0.15 } else { score += 0.05 }
+		return score
+	}
+
+	private static func intersectionOverUnion(_ lhs: BoundingBox, _ rhs: BoundingBox) -> Double {
+		let lhsMaxX = lhs.x + lhs.width
+		let lhsMaxY = lhs.y + lhs.height
+		let rhsMaxX = rhs.x + rhs.width
+		let rhsMaxY = rhs.y + rhs.height
+		let intersectionWidth = max(0, min(lhsMaxX, rhsMaxX) - max(lhs.x, rhs.x))
+		let intersectionHeight = max(0, min(lhsMaxY, rhsMaxY) - max(lhs.y, rhs.y))
+		let intersection = intersectionWidth * intersectionHeight
+		guard intersection > 0 else { return 0 }
+		let union = lhs.width * lhs.height + rhs.width * rhs.height - intersection
+		return union > 0 ? intersection / union : 0
 	}
 
 	/// Whether the page's content stream contains text-showing operators (`Tj`,

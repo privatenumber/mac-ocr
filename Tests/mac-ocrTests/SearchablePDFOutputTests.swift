@@ -174,6 +174,7 @@ import Testing
 		let firstOcr = try #require(records[0]["ocr"] as? [String: Any])
 		let observations = try #require(firstOcr["observations"] as? [[String: Any]])
 		#expect(!observations.isEmpty)
+		#expect(observations.first?["sourcePass"] as? String == "full")
 		let words = observations.first?["words"] as? [[String: Any]]
 		#expect(words?.isEmpty == false)
 	}
