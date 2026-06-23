@@ -100,6 +100,79 @@ public enum SearchablePDF {
 		return pdfData as Data
 	}
 
+	/// Render sources into one searchable PDF in the order they are passed.
+	///
+	/// Merged output always rewrites inputs into a new PDF document, so the
+	/// single-PDF verbatim pass-through optimization does not apply.
+	public static func renderMerged(
+		sources: [ImageSource],
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String? = nil,
+		ocrAllPages: Bool = false,
+		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil,
+		imageDownsampleDpi: Double? = nil,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws -> Data {
+		try validateImageQuality(imageQuality)
+		try validateImageDPI(imagePageDpi, name: "--image-page-dpi")
+		try validateImageDPI(imageDownsampleDpi, name: "--image-downsample-dpi")
+		guard !sources.isEmpty else {
+			throw MessageError("No input sources were provided")
+		}
+
+		var producers: [PageProducer] = []
+		producers.reserveCapacity(sources.count)
+		for source in sources {
+			let producer = try await resolveProducer(
+				source,
+				password: password,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
+			)
+			producers.append(producer)
+		}
+		let pageCounts = try zip(producers, sources).map { producer, source in
+			try pageCount(for: producer, displayName: source.displayName)
+		}
+		let totalPages = pageCounts.reduce(0, +)
+
+		let pdfData = NSMutableData()
+		guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
+			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
+		else {
+			throw MessageError("Could not create PDF output context")
+		}
+
+		onProgress?(0, totalPages)
+		var completedBeforeSource = 0
+		for (producer, source) in zip(producers, sources) {
+			let pagesWritten = try await appendSource(
+				producer,
+				displayName: source.displayName,
+				options: options,
+				pdfDpi: pdfDpi,
+				ocrAllPages: ocrAllPages,
+				into: context,
+				onProgress: { done, _ in
+					if done > 0 {
+						onProgress?(completedBeforeSource + done, totalPages)
+					}
+				}
+			)
+			completedBeforeSource += pagesWritten
+		}
+
+		guard completedBeforeSource > 0 else {
+			throw MessageError("No pages were produced")
+		}
+
+		context.closePDF()
+		return pdfData as Data
+	}
+
 	// MARK: - Source resolution
 
 	private enum PageProducer {
@@ -139,6 +212,19 @@ public enum SearchablePDF {
 	/// the main document, so the transfer is safe.
 	private struct Unchecked<T>: @unchecked Sendable {
 		let value: T
+	}
+
+	private static func pageCount(for producer: PageProducer, displayName: String) throws -> Int {
+		switch producer {
+		case .image:
+			return 1
+		case .pdf(let document, _, _):
+			let pageCount = document.numberOfPages
+			guard pageCount > 0 else {
+				throw MessageError("PDF has no pages: \(displayName)")
+			}
+			return pageCount
+		}
 	}
 
 	// TODO: The rewrite below drops annotations (links, form fields),

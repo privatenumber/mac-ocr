@@ -7,20 +7,20 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		commandName: "searchable-pdf",
 		abstract: "Create a PDF with an invisible, selectable OCR text layer.",
 		discussion: """
-			Writes one searchable PDF per input — the output looks identical to the \
-			source but its text is selectable and searchable. An image becomes a \
-			single page; PDF pages are preserved without re-rasterizing their \
-			original content. Inputs are never merged.
+			Writes searchable PDFs that look identical to the source but whose text is \
+			selectable and searchable. By default, each input is written to its own \
+			PDF. Pass --merge to combine inputs into one PDF in argument order.
 
 			  mac-ocr searchable-pdf scan.pdf                 # writes scan.ocr.pdf
 			  mac-ocr searchable-pdf *.pdf                     # writes <name>.ocr.pdf for each
 			  mac-ocr searchable-pdf scan.pdf -o out/          # writes out/scan.ocr.pdf
 			  mac-ocr searchable-pdf scan.pdf -o '[name]-ocr.pdf'
 			  mac-ocr searchable-pdf scan.pdf -o -             # PDF to stdout
+			  mac-ocr searchable-pdf --merge -o doc.pdf page1.jpg page2.jpg
 
 			By default each input is written next to it as [name].ocr.pdf. A single \
-			fixed path or - (stdout) takes only one input; use a directory or a \
-			[name] template for multiple.
+			fixed path or - (stdout) takes only one input unless --merge is passed; \
+			use a directory or a [name] template for multiple per-input outputs.
 			"""
 	)
 
@@ -40,6 +40,12 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		help: "OCR every page, including pages that already have selectable text (skipped by default). Existing digital text may appear twice in copy/search."
 	)
 	var ocrAllPages = false
+
+	@Flag(
+		name: .long,
+		help: "Merge inputs into one searchable PDF in argument order. Requires -o <file.pdf> or -o -."
+	)
+	var merge = false
 
 	@Option(
 		name: .long,
@@ -88,6 +94,16 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		let options = try recognition.buildOCROptions(regionOfInterest: try resolvedROI())
 		let pdfDpi = resolvedPdfDpi
 		let pdfPassword = resolvePdfPassword(recognition.password)
+
+		if merge {
+			try await runMerged(
+				sources: sources,
+				options: options,
+				pdfDpi: pdfDpi,
+				pdfPassword: pdfPassword
+			)
+			return
+		}
 
 		// stdout: a single combined-free input straight to the pipe. Progress is
 		// written to stderr only, so the piped PDF bytes are never corrupted.
@@ -149,6 +165,40 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		}
 	}
 
+	private func runMerged(
+		sources: [ImageSource],
+		options: OCROptions,
+		pdfDpi: Int?,
+		pdfPassword: String?
+	) async throws {
+		let outputPath = output == "-" ? nil : try resolvedMergeOutputPath()
+		let reporter = ProgressReporter(name: output == "-" ? "merged searchable PDF" : output ?? "merged searchable PDF")
+		let data = try await SearchablePDF.renderMerged(
+			sources: sources,
+			options: options,
+			pdfDpi: pdfDpi,
+			password: pdfPassword,
+			ocrAllPages: ocrAllPages,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi,
+			onProgress: { reporter.update(done: $0, total: $1) }
+		)
+
+		if output == "-" {
+			FileHandle.standardOutput.write(data)
+			reporter.finish(outputPath: nil)
+			return
+		}
+
+		guard let path = outputPath else {
+			preconditionFailure("merge output path is resolved before rendering")
+		}
+		try ensureParentDirectory(forFile: path)
+		try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+		reporter.finish(outputPath: path)
+	}
+
 	/// The per-input output mode. The default and directory forms resolve to a
 	/// `[name].ocr.pdf` template (replace-extension naming); `[…]` templates pass
 	/// through; a bare path is a single static file. (`-o -` for stdout is
@@ -168,6 +218,10 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 
 	private func validateOutputRouting() throws {
 		let multipleInputs = resolveInputSources().count > 1
+		if merge {
+			try validateMergedOutputRouting()
+			return
+		}
 
 		if output == "-" {
 			if multipleInputs {
@@ -197,6 +251,54 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		}
 		try validateOutputModeSupportsSources(mode, files: files)
 		try validateNoOutputCollisions(mode: mode)
+	}
+
+	private func validateMergedOutputRouting() throws {
+		guard let output else {
+			throw ValidationError("`--merge` requires -o <file.pdf> or -o -.")
+		}
+		if output == "-" {
+			if FileHandle.standardOutput.isTerminal {
+				throw ValidationError(
+					"Refusing to write a PDF to the terminal. Pass -o <file.pdf>, or redirect stdout (-o -)."
+				)
+			}
+			return
+		}
+
+		let mode: OutputMode
+		try validateOutputModeSupportsSources(.static(output), files: files)
+		do {
+			mode = try parseOutputValue(output)
+		} catch let error as MessageError {
+			throw ValidationError(error.message)
+		}
+		switch mode {
+		case .static:
+			return
+		case .directory:
+			throw ValidationError("`--merge` writes one PDF and does not support directory output. Pass -o <file.pdf> or -o -.")
+		case .template:
+			throw ValidationError("`--merge` writes one PDF and does not support output templates. Pass -o <file.pdf> or -o -.")
+		case .off:
+			preconditionFailure("parseOutputValue never returns .off")
+		}
+	}
+
+	private func resolvedMergeOutputPath() throws -> String {
+		guard let output, output != "-" else {
+			throw MessageError("--merge requires a fixed output path")
+		}
+		switch try parseOutputValue(output) {
+		case .static(let path):
+			return path
+		case .directory:
+			throw MessageError("--merge does not support directory output")
+		case .template:
+			throw MessageError("--merge does not support output templates")
+		case .off:
+			preconditionFailure("parseOutputValue never returns .off")
+		}
 	}
 
 	/// Reject input sets where two sources resolve to the same output path.

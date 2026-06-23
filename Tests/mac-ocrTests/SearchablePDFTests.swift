@@ -65,6 +65,21 @@ import Testing
 		#expect(perPage[2].contains("Page Three"))
 	}
 
+	@Test func mergedSourcesStayInArgumentOrder() async throws {
+		let data = try await SearchablePDF.renderMerged(
+			sources: [Self.source("hello.png"), Self.source("multipage.pdf")],
+			options: OCROptions(),
+			pdfDpi: nil
+		)
+		let document = try #require(PDFDocument(data: data))
+		#expect(document.pageCount == 4)
+		let perPage = (0..<document.pageCount).map { document.page(at: $0)?.string ?? "" }
+		#expect(perPage[0].contains("Hello World"))
+		#expect(perPage[1].contains("Page One"))
+		#expect(perPage[2].contains("Page Two"))
+		#expect(perPage[3].contains("Page Three"))
+	}
+
 	@Test func recognizedWordsExtractAsCleanRuns() async throws {
 		// Regression: a non-unit horizontal text scale once made extractors read
 		// "Hello" as "H e l l o", breaking search. Assert contiguous words survive.

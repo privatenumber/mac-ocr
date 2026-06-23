@@ -159,7 +159,7 @@ const ph = obs.boundingBox.height * result.height
 
 ## searchable-pdf
 
-Writes a PDF that looks identical to the source but carries an invisible, selectable OCR text layer. **One searchable PDF per input — inputs are never merged.**
+Writes a PDF that looks identical to the source but carries an invisible, selectable OCR text layer. By default, each input writes its own searchable PDF; pass `--merge` to combine inputs into one PDF.
 
 ```sh
 mac-ocr searchable-pdf scan.pdf                      # writes scan.ocr.pdf
@@ -167,7 +167,10 @@ mac-ocr searchable-pdf *.pdf                          # writes <name>.ocr.pdf fo
 mac-ocr searchable-pdf scan.pdf -o out/               # out/scan.ocr.pdf
 mac-ocr searchable-pdf scan.pdf -o '[name]-ocr.pdf'   # scan-ocr.pdf
 mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout
+mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 ```
+
+By default, one input produces one output PDF. With `--merge`, all inputs are combined into one PDF in the exact argument order provided; `mac-ocr` does not sort or reorder pages.
 
 - **PDF inputs**: each original page is preserved verbatim (vector content is not re-rasterized); only the text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to run OCR.
 - **Image inputs**: one page, sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
@@ -197,7 +200,9 @@ The "already has text" check is page-level: a scanned page carrying one small di
 | `-` | single input → stdout (refused on a terminal) |
 | fixed path or `-`, with ≥2 inputs | error — use a directory or `[name]` template |
 
-Also accepts `--ocr-all-pages` (above), `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
+With `--merge`, `-o <file.pdf>` and `-o -` are allowed for multiple inputs. Directory and template outputs are rejected because merged mode writes exactly one PDF.
+
+Also accepts `--ocr-all-pages` (above), `--merge`, `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
 
 ### Progress and status
 

@@ -74,6 +74,7 @@ grep -rli "invoice" ~/Screenshots                    # then search with normal t
 mac-ocr searchable-pdf scan.pdf            # writes scan.ocr.pdf
 mac-ocr searchable-pdf photo.jpg            # image → one-page photo.ocr.pdf
 mac-ocr searchable-pdf *.pdf                # writes <name>.ocr.pdf for each
+mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 ```
 
 Use `-o` to control the destination — a directory, a `[name]` template, a fixed file, or `-` for stdout:
@@ -86,6 +87,8 @@ mac-ocr searchable-pdf scan.pdf -o - > scan.pdf      # stdout
 ```
 
 A fixed path or `-` (stdout) takes a single input; for multiple inputs use a directory or a `[name]` template.
+
+Pass `--merge` to combine multiple inputs into one searchable PDF. Merged pages follow the exact argument order you pass; `mac-ocr` never sorts or reorders inputs.
 
 Image inputs are sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 
@@ -124,6 +127,7 @@ Both OCR and `searchable-pdf` accept the recognition options:
 |------|--------|
 | `-o, --output <dest>` | Output path, `[name]` template, directory, or `-` for stdout. Default: `[name].ocr.pdf` next to each input. |
 | `--ocr-all-pages` | OCR every page, including pages that already have selectable text (skipped by default) |
+| `--merge` | Combine inputs into one searchable PDF in argument order. Requires `-o <file.pdf>` or `-o -`. |
 | `--image-quality <0–1>` | Visible image layer quality for image inputs. OCR still uses the original full-resolution image; PDF inputs are not recompressed. |
 | `--image-page-dpi <36–2400>` | DPI to use for image input page sizing. OCR still uses the original full-resolution image; PDF inputs are unaffected. |
 | `--image-downsample-dpi <36–2400>` | Maximum DPI for the visible image layer of image inputs. OCR and page size are unaffected; PDF inputs are not downsampled. |

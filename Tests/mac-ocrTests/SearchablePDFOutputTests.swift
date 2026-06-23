@@ -65,6 +65,76 @@ import Testing
 		#expect(!FileManager.default.fileExists(atPath: directory + "/one.pdf"), "must not write a merged file")
 	}
 
+	@Test func mergeWritesSinglePDFInArgumentOrder() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let first = try stage("hello.png", in: directory)
+		let second = try stage("multipage.pdf", in: directory)
+		let output = directory + "/merged.pdf"
+
+		let result = try TestSupport.run(["searchable-pdf", "--merge", "-o", output, first, second])
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		let document = try #require(PDFDocument(url: URL(fileURLWithPath: output)))
+		#expect(document.pageCount == 4)
+		let perPage = (0..<document.pageCount).map { document.page(at: $0)?.string ?? "" }
+		#expect(perPage[0].contains("Hello World"))
+		#expect(perPage[1].contains("Page One"))
+		#expect(perPage[2].contains("Page Two"))
+		#expect(perPage[3].contains("Page Three"))
+	}
+
+	@Test func mergeStdoutAllowsMultipleInputs() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let a = try stage("hello.png", in: directory)
+		let b = try stage("document-photo.png", in: directory)
+
+		let result = try TestSupport.run(["searchable-pdf", "--merge", "-o", "-", a, b])
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(result.stdoutData.prefix(5) == Data("%PDF-".utf8))
+		let document = try #require(PDFDocument(data: result.stdoutData))
+		#expect(document.pageCount == 2)
+	}
+
+	@Test func mergeRequiresOutput() throws {
+		let result = try TestSupport.run(["searchable-pdf", "--merge", TestSupport.fixturePath("hello.png")])
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("`--merge` requires -o <file.pdf> or -o -."))
+	}
+
+	@Test func mergeRejectsDirectoryOutput() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let result = try TestSupport.run([
+			"searchable-pdf", "--merge", "-o", directory + "/", TestSupport.fixturePath("hello.png"),
+		])
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("`--merge` writes one PDF and does not support directory output"))
+	}
+
+	@Test func mergeRejectsTemplateOutput() throws {
+		let result = try TestSupport.run([
+			"searchable-pdf", "--merge", "-o", "[name].pdf", TestSupport.fixturePath("hello.png"),
+		])
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("`--merge` writes one PDF and does not support output templates"))
+	}
+
+	@Test func mergeFailureDoesNotWriteOutput() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let bad = try stage("invalid.txt", in: directory)
+		let good = try stage("hello.png", in: directory)
+		let output = directory + "/merged.pdf"
+
+		let result = try TestSupport.run(["searchable-pdf", "--merge", "-o", output, good, bad])
+
+		#expect(result.exitCode != 0)
+		#expect(!FileManager.default.fileExists(atPath: output))
+	}
+
 	@Test func stdoutWithMultipleInputsErrors() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }
