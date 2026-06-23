@@ -1,5 +1,3 @@
-import CoreGraphics
-import CoreText
 import Foundation
 import PDFKit
 import Testing
@@ -239,6 +237,11 @@ import Testing
 			let ocr = try #require(record["ocr"] as? [String: Any])
 			#expect(ocr["skipped"] as? Bool == true)
 			#expect(ocr["skipReason"] as? String == "existing-text-layer")
+			let pdfPage = try #require(record["pdfPage"] as? [String: Any])
+			let mediaBox = try #require(pdfPage["mediaBox"] as? [String: Any])
+			#expect(pdfPage["rotation"] as? Int == 90)
+			#expect(mediaBox["x"] as? Double == 10)
+			#expect(mediaBox["y"] as? Double == 20)
 		}
 	}
 
@@ -365,21 +368,35 @@ import Testing
 	}
 
 	private func makeBornDigitalPDF() -> Data {
-		let data = NSMutableData()
-		var mediaBox = CGRect(x: 0, y: 0, width: 300, height: 120)
-		let context = CGContext(consumer: CGDataConsumer(data: data as CFMutableData)!, mediaBox: &mediaBox, nil)!
-		context.beginPDFPage(nil)
-		context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-		context.fill(mediaBox)
-		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-		let font = CTFontCreateWithName("Helvetica" as CFString, 42, nil)
-		let line = CTLineCreateWithAttributedString(
-			NSAttributedString(string: "Hello World", attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font])
+		let stream = "BT /F1 42 Tf 30 70 Td (Hello World) Tj ET"
+		let streamBytes = Array(stream.utf8)
+		var content = Data("%PDF-1.4\n".utf8)
+		var offsets: [Int] = []
+
+		func appendObject(_ body: String) {
+			offsets.append(content.count)
+			content.append(contentsOf: body.utf8)
+		}
+
+		appendObject("1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n")
+		appendObject("2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n")
+		appendObject(
+			"3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [10 20 310 140] /CropBox [10 20 310 140] /Rotate 90 /Resources <</Font <</F1 5 0 R>>>> /Contents 4 0 R>>\nendobj\n"
 		)
-		context.textPosition = CGPoint(x: 20, y: 45)
-		CTLineDraw(line, context)
-		context.endPDFPage()
-		context.closePDF()
-		return data as Data
+
+		offsets.append(content.count)
+		content.append(contentsOf: "4 0 obj\n<</Length \(streamBytes.count)>>\nstream\n".utf8)
+		content.append(contentsOf: streamBytes)
+		content.append(contentsOf: "\nendstream\nendobj\n".utf8)
+
+		appendObject("5 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\n")
+
+		let xrefOffset = content.count
+		content.append(contentsOf: "xref\n0 6\n0000000000 65535 f\r\n".utf8)
+		for offset in offsets {
+			content.append(contentsOf: String(format: "%010d 00000 n\r\n", offset).utf8)
+		}
+		content.append(contentsOf: "trailer\n<</Size 6 /Root 1 0 R>>\nstartxref\n\(xrefOffset)\n%%EOF\n".utf8)
+		return content
 	}
 }

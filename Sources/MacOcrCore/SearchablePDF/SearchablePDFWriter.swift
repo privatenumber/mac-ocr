@@ -380,6 +380,7 @@ public enum SearchablePDF {
 
 	private struct DebugPDFPage: Encodable {
 		let mediaBox: DebugRect
+		let rotation: Int
 	}
 
 	private struct DebugRect: Encodable {
@@ -515,7 +516,7 @@ public enum SearchablePDF {
 			guard let page = document.page(at: pageNumber) else {
 				throw MessageError("Could not load PDF page \(pageNumber)")
 			}
-			let mediaBox = displayBox(for: page)
+			let mediaBox = page.getBoxRect(.mediaBox)
 			try writer.write(
 				debugRecord(
 					context: DebugContext(
@@ -531,6 +532,7 @@ public enum SearchablePDF {
 					outputPageCount: outputPageCount,
 					ocrImage: nil,
 					mediaBox: mediaBox,
+					pdfRotation: Int(page.rotationAngle),
 					ocr: OCRResult(text: "", observations: []),
 					skipped: true,
 					skipReason: "existing-text-layer"
@@ -962,6 +964,7 @@ public enum SearchablePDF {
 		outputPageCount: Int,
 		ocrImage: DebugImageSize?,
 		mediaBox: CGRect,
+		pdfRotation: Int = 0,
 		ocr: OCRResult,
 		skipped: Bool,
 		skipReason: String?
@@ -974,7 +977,7 @@ public enum SearchablePDF {
 			outputPage: outputPage,
 			outputPageCount: outputPageCount,
 			ocrImage: ocrImage,
-			pdfPage: DebugPDFPage(mediaBox: DebugRect(mediaBox)),
+			pdfPage: DebugPDFPage(mediaBox: DebugRect(mediaBox), rotation: pdfRotation),
 			ocr: DebugOCR(ocr: ocr, skipped: skipped, skipReason: skipReason)
 		)
 	}
