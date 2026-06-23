@@ -18,6 +18,15 @@ import ImageIO
 /// line-level: one invisible text run per recognized observation, positioned
 /// from the observation's bounding box.
 public enum SearchablePDF {
+	public struct DebugOptions: Sendable {
+		public let jsonlURL: URL
+		public let drawOverlay: Bool
+
+		public init(jsonlURL: URL, drawOverlay: Bool = true) {
+			self.jsonlURL = jsonlURL
+			self.drawOverlay = drawOverlay
+		}
+	}
 
 	/// Render a single source into a searchable PDF and return its bytes.
 	///
@@ -45,6 +54,7 @@ public enum SearchablePDF {
 		imageQuality: Double? = nil,
 		imagePageDpi: Double? = nil,
 		imageDownsampleDpi: Double? = nil,
+		debugOptions: DebugOptions? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		try validateImageQuality(imageQuality)
@@ -87,9 +97,22 @@ public enum SearchablePDF {
 			throw MessageError("Could not create PDF output context")
 		}
 
+		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
+		defer { debugWriter?.close() }
+
 		let pagesWritten = try await appendSource(
 			producer, displayName: source.displayName, options: options, pdfDpi: pdfDpi,
-			ocrAllPages: ocrAllPages, into: context, onProgress: onProgress
+			ocrAllPages: ocrAllPages, into: context,
+			debugContext: debugWriter.map {
+				DebugContext(
+					writer: $0,
+					source: source,
+					sourceIndex: 1,
+					outputPageOffset: 0,
+					outputPageCount: nil
+				)
+			},
+			onProgress: onProgress
 		)
 
 		guard pagesWritten > 0 else {
@@ -113,6 +136,7 @@ public enum SearchablePDF {
 		imageQuality: Double? = nil,
 		imagePageDpi: Double? = nil,
 		imageDownsampleDpi: Double? = nil,
+		debugOptions: DebugOptions? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		let pdfData = NSMutableData()
@@ -121,6 +145,9 @@ public enum SearchablePDF {
 		else {
 			throw MessageError("Could not create PDF output context")
 		}
+
+		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
+		defer { debugWriter?.close() }
 
 		let completedPages = try await appendMergedSources(
 			sources: sources,
@@ -132,6 +159,7 @@ public enum SearchablePDF {
 			imagePageDpi: imagePageDpi,
 			imageDownsampleDpi: imageDownsampleDpi,
 			into: context,
+			debugWriter: debugWriter,
 			onProgress: onProgress
 		)
 
@@ -153,6 +181,7 @@ public enum SearchablePDF {
 		imageQuality: Double? = nil,
 		imagePageDpi: Double? = nil,
 		imageDownsampleDpi: Double? = nil,
+		debugOptions: DebugOptions? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws {
 		guard let consumer = CGDataConsumer(url: outputURL as CFURL),
@@ -160,6 +189,9 @@ public enum SearchablePDF {
 		else {
 			throw MessageError("Could not create PDF output context")
 		}
+
+		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
+		defer { debugWriter?.close() }
 
 		let completedPages = try await appendMergedSources(
 			sources: sources,
@@ -171,6 +203,7 @@ public enum SearchablePDF {
 			imagePageDpi: imagePageDpi,
 			imageDownsampleDpi: imageDownsampleDpi,
 			into: context,
+			debugWriter: debugWriter,
 			onProgress: onProgress
 		)
 
@@ -191,6 +224,7 @@ public enum SearchablePDF {
 		imagePageDpi: Double?,
 		imageDownsampleDpi: Double?,
 		into context: CGContext,
+		debugWriter: DebugWriter?,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
 		try validateImageQuality(imageQuality)
@@ -209,7 +243,7 @@ public enum SearchablePDF {
 
 		onProgress?(0, totalPages)
 		var completedBeforeSource = 0
-		for plan in plans {
+		for (index, plan) in plans.enumerated() {
 			let producer = try await resolveProducer(
 				plan: plan,
 				password: password,
@@ -224,6 +258,15 @@ public enum SearchablePDF {
 				pdfDpi: pdfDpi,
 				ocrAllPages: ocrAllPages,
 				into: context,
+				debugContext: debugWriter.map {
+					DebugContext(
+						writer: $0,
+						source: plan.source,
+						sourceIndex: index + 1,
+						outputPageOffset: completedBeforeSource,
+						outputPageCount: totalPages
+					)
+				},
 				onProgress: { done, _ in
 					if done > 0 {
 						onProgress?(completedBeforeSource + done, totalPages)
@@ -261,6 +304,118 @@ public enum SearchablePDF {
 		let source: ImageSource
 		let pageCount: Int
 		let data: Data?
+	}
+
+	private struct DebugContext {
+		let writer: DebugWriter
+		let source: ImageSource
+		let sourceIndex: Int
+		let outputPageOffset: Int
+		let outputPageCount: Int?
+	}
+
+	private final class DebugWriter {
+		let options: DebugOptions
+		private let handle: FileHandle
+
+		init(options: DebugOptions) throws {
+			self.options = options
+			try FileManager.default.createDirectory(
+				at: options.jsonlURL.deletingLastPathComponent(),
+				withIntermediateDirectories: true
+			)
+			FileManager.default.createFile(atPath: options.jsonlURL.path, contents: nil)
+			handle = try FileHandle(forWritingTo: options.jsonlURL)
+			try handle.truncate(atOffset: 0)
+		}
+
+		func write(_ record: DebugPageRecord) throws {
+			let line = try encodeJSONLine(record) + "\n"
+			handle.write(Data(line.utf8))
+		}
+
+		func close() {
+			handle.closeFile()
+		}
+	}
+
+	private struct DebugPageRecord: Encodable {
+		let schema = "mac-ocr.searchable-pdf.debug"
+		let schemaVersion = 1
+		let source: ImageSource
+		let sourceIndex: Int
+		let sourcePage: Int
+		let sourcePageCount: Int
+		let outputPage: Int
+		let outputPageCount: Int
+		let ocrImage: DebugImageSize?
+		let pdfPage: DebugPDFPage
+		let ocr: DebugOCR
+	}
+
+	private struct DebugImageSize: Encodable {
+		let width: Int
+		let height: Int
+	}
+
+	private struct DebugPDFPage: Encodable {
+		let mediaBox: DebugRect
+	}
+
+	private struct DebugRect: Encodable {
+		let x: Double
+		let y: Double
+		let width: Double
+		let height: Double
+
+		init(_ rect: CGRect) {
+			x = Double(rect.origin.x)
+			y = Double(rect.origin.y)
+			width = Double(rect.width)
+			height = Double(rect.height)
+		}
+	}
+
+	private struct DebugOCR: Encodable {
+		let skipped: Bool
+		let skipReason: String?
+		let text: String
+		let observations: [DebugObservation]
+
+		init(ocr: OCRResult, skipped: Bool = false, skipReason: String? = nil) {
+			self.skipped = skipped
+			self.skipReason = skipReason
+			text = ocr.text
+			observations = ocr.observations.map(DebugObservation.init(observation:))
+		}
+	}
+
+	private struct DebugObservation: Encodable {
+		let text: String
+		let confidence: Float
+		let requestRevision: Int
+		let boundingBox: BoundingBox
+		let candidates: [TextCandidate]
+		let words: [DebugWord]
+
+		init(observation: Observation) {
+			text = observation.text
+			confidence = observation.confidence
+			requestRevision = observation.requestRevision
+			boundingBox = observation.boundingBox
+			candidates = observation.candidates
+			words = observation.words.map(DebugWord.init(word:))
+		}
+	}
+
+	private struct DebugWord: Encodable {
+		let text: String
+		let boundingBox: BoundingBox
+
+		init(word: WordBox) {
+			text = word.text
+			boundingBox = word.boundingBox
+		}
 	}
 
 	/// Per-page geometry and OCR decision, computed serially up front on the
@@ -367,6 +522,7 @@ public enum SearchablePDF {
 		pdfDpi: Int?,
 		ocrAllPages: Bool,
 		into context: CGContext,
+		debugContext: DebugContext? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
 		switch producer {
@@ -450,6 +606,8 @@ public enum SearchablePDF {
 			onProgress?(0, pageCount)
 			for (index, plan) in plans.enumerated() {
 				let ocr: OCRResult
+				let ocrImage: DebugImageSize?
+				let skipReason: String?
 				if plan.needsOCR {
 					let raster: CGImage
 					if let task = prefetch, prefetchIndex == index {
@@ -465,15 +623,37 @@ public enum SearchablePDF {
 							requestedDpi: pdfDpi
 						)
 					}
+					ocrImage = DebugImageSize(width: raster.width, height: raster.height)
+					skipReason = nil
 					ocr = try await recognize(raster, options: options)
 				} else {
+					ocrImage = nil
+					skipReason = "existing-text-layer"
 					ocr = OCRResult(text: "", observations: [])
 				}
 
-				writePage(mediaBox: plan.displayBox, ocr: ocr, into: context) { context in
+				writePage(
+					mediaBox: plan.displayBox,
+					ocr: ocr,
+					into: context,
+					debugOverlay: debugContext?.writer.options.drawOverlay == true
+				) { context in
 					context.concatenate(plan.drawingTransform)
 					context.drawPDFPage(plan.page)
 				}
+				try debugContext?.writer.write(
+					debugRecord(
+						context: debugContext,
+						sourcePage: plan.pageNumber,
+						sourcePageCount: pageCount,
+						outputPage: (debugContext?.outputPageOffset ?? 0) + index + 1,
+						outputPageCount: debugContext?.outputPageCount ?? pageCount,
+						ocrImage: ocrImage,
+						mediaBox: plan.displayBox,
+						ocr: ocr,
+						skipped: !plan.needsOCR,
+						skipReason: skipReason
+					))
 				onProgress?(index + 1, pageCount)
 			}
 			return pageCount
@@ -483,13 +663,31 @@ public enum SearchablePDF {
 			let image = page.image
 			let mediaBox = page.mediaBox
 			let ocr = try await recognize(image, options: options)
-			writePage(mediaBox: mediaBox, ocr: ocr, into: context) { context in
+			writePage(
+				mediaBox: mediaBox,
+				ocr: ocr,
+				into: context,
+				debugOverlay: debugContext?.writer.options.drawOverlay == true
+			) { context in
 				context.concatenate(
 					page.visiblePDFPage.getDrawingTransform(
 						.cropBox, rect: mediaBox, rotate: 0, preserveAspectRatio: false
 					))
 				context.drawPDFPage(page.visiblePDFPage)
 			}
+			try debugContext?.writer.write(
+				debugRecord(
+					context: debugContext,
+					sourcePage: 1,
+					sourcePageCount: 1,
+					outputPage: (debugContext?.outputPageOffset ?? 0) + 1,
+					outputPageCount: debugContext?.outputPageCount ?? 1,
+					ocrImage: DebugImageSize(width: image.width, height: image.height),
+					mediaBox: mediaBox,
+					ocr: ocr,
+					skipped: false,
+					skipReason: nil
+				))
 			onProgress?(1, 1)
 			return 1
 		}
@@ -708,6 +906,31 @@ public enum SearchablePDF {
 		}
 	}
 
+	private static func debugRecord(
+		context: DebugContext?,
+		sourcePage: Int,
+		sourcePageCount: Int,
+		outputPage: Int,
+		outputPageCount: Int,
+		ocrImage: DebugImageSize?,
+		mediaBox: CGRect,
+		ocr: OCRResult,
+		skipped: Bool,
+		skipReason: String?
+	) -> DebugPageRecord {
+		DebugPageRecord(
+			source: context?.source ?? .stdin,
+			sourceIndex: context?.sourceIndex ?? 1,
+			sourcePage: sourcePage,
+			sourcePageCount: sourcePageCount,
+			outputPage: outputPage,
+			outputPageCount: outputPageCount,
+			ocrImage: ocrImage,
+			pdfPage: DebugPDFPage(mediaBox: DebugRect(mediaBox)),
+			ocr: DebugOCR(ocr: ocr, skipped: skipped, skipReason: skipReason)
+		)
+	}
+
 	private static func downsampleVisibleImage(
 		_ image: CGImage,
 		mediaBox: CGRect,
@@ -900,6 +1123,7 @@ public enum SearchablePDF {
 		mediaBox: CGRect,
 		ocr: OCRResult,
 		into context: CGContext,
+		debugOverlay: Bool = false,
 		drawVisible: (CGContext) -> Void
 	) {
 		var box = mediaBox
@@ -941,7 +1165,36 @@ public enum SearchablePDF {
 		}
 		context.restoreGState()
 
+		if debugOverlay {
+			drawDebugOverlay(ocr: ocr, mediaBox: mediaBox, into: context)
+		}
+
 		context.endPDFPage()
+	}
+
+	private static func drawDebugOverlay(ocr: OCRResult, mediaBox: CGRect, into context: CGContext) {
+		context.saveGState()
+		context.setLineWidth(max(min(mediaBox.width, mediaBox.height) * 0.001, 0.5))
+		context.setStrokeColor(red: 1, green: 0, blue: 0, alpha: 0.85)
+		for observation in ocr.observations {
+			context.stroke(pdfRect(normalizedBox: observation.boundingBox, mediaBox: mediaBox))
+		}
+		context.setStrokeColor(red: 0, green: 0.25, blue: 1, alpha: 0.85)
+		for observation in ocr.observations {
+			for word in observation.words {
+				context.stroke(pdfRect(normalizedBox: word.boundingBox, mediaBox: mediaBox))
+			}
+		}
+		context.restoreGState()
+	}
+
+	private static func pdfRect(normalizedBox box: BoundingBox, mediaBox: CGRect) -> CGRect {
+		CGRect(
+			x: mediaBox.minX + CGFloat(box.x) * mediaBox.width,
+			y: mediaBox.minY + CGFloat(1 - box.y - box.height) * mediaBox.height,
+			width: CGFloat(box.width) * mediaBox.width,
+			height: CGFloat(box.height) * mediaBox.height
+		)
 	}
 
 	/// Draw a single recognized string as invisible text positioned to its OCR

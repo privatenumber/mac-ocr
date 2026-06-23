@@ -79,6 +79,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		try imageQuality?.requireUnitInterval(name: "--image-quality")
 		try imagePageDpi?.requireDPI(name: "--image-page-dpi")
 		try imageDownsampleDpi?.requireDPI(name: "--image-downsample-dpi")
+		if debugEnabled, output == "-" {
+			throw ValidationError("MAC_OCR_DEBUG=1 requires file PDF output; -o - is not supported.")
+		}
 		if let roi {
 			_ = try parseRegionOfInterest(roi)
 		}
@@ -135,14 +138,6 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				: progressLabel(for: source)
 			let reporter = ProgressReporter(name: label)
 			do {
-				let data = try await SearchablePDF.render(
-					source: source, options: options, pdfDpi: pdfDpi, password: pdfPassword,
-					ocrAllPages: ocrAllPages,
-					imageQuality: imageQuality,
-					imagePageDpi: imagePageDpi,
-					imageDownsampleDpi: imageDownsampleDpi,
-					onProgress: { reporter.update(done: $0, total: $1) }
-				)
 				let path = try resolveOutputPath(
 					mode: mode,
 					sourcePath: outputSourcePath(for: source),
@@ -151,6 +146,15 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 					outputExtension: ".pdf"
 				)
 				try ensureParentDirectory(forFile: path)
+				let data = try await SearchablePDF.render(
+					source: source, options: options, pdfDpi: pdfDpi, password: pdfPassword,
+					ocrAllPages: ocrAllPages,
+					imageQuality: imageQuality,
+					imagePageDpi: imagePageDpi,
+					imageDownsampleDpi: imageDownsampleDpi,
+					debugOptions: debugOptions(forPDFPath: path),
+					onProgress: { reporter.update(done: $0, total: $1) }
+				)
 				// Atomic: a crash mid-write must not replace a previous good
 				// output (e.g. a re-run's [name].ocr.pdf) with a truncated PDF.
 				try data.write(to: URL(fileURLWithPath: path), options: .atomic)
@@ -210,10 +214,32 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			imageQuality: imageQuality,
 			imagePageDpi: imagePageDpi,
 			imageDownsampleDpi: imageDownsampleDpi,
+			debugOptions: debugOptions(forPDFPath: path),
 			onProgress: { reporter.update(done: $0, total: $1) }
 		)
 		try replaceFile(at: outputURL, with: tempURL)
 		reporter.finish(outputPath: path)
+	}
+
+	private var debugEnabled: Bool {
+		guard let value = ProcessInfo.processInfo.environment["MAC_OCR_DEBUG"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+			!value.isEmpty
+		else {
+			return false
+		}
+		switch value.lowercased() {
+		case "0", "false", "no", "off":
+			return false
+		default:
+			return true
+		}
+	}
+
+	private func debugOptions(forPDFPath path: String) -> SearchablePDF.DebugOptions? {
+		guard debugEnabled else { return nil }
+		let pdfURL = URL(fileURLWithPath: path)
+		let jsonlURL = pdfURL.deletingPathExtension().appendingPathExtension("jsonl")
+		return SearchablePDF.DebugOptions(jsonlURL: jsonlURL)
 	}
 
 	private func replaceFile(at outputURL: URL, with tempURL: URL) throws {

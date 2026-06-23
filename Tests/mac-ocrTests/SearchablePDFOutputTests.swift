@@ -146,6 +146,64 @@ import Testing
 		#expect(!FileManager.default.fileExists(atPath: output))
 	}
 
+	@Test func debugMergeWritesJsonlSidecarInArgumentOrder() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let first = try stage("hello.png", in: directory)
+		let second = try stage("document-photo.png", in: directory)
+		let output = directory + "/merged.pdf"
+		let debug = directory + "/merged.jsonl"
+
+		let result = try TestSupport.run(
+			["searchable-pdf", "--merge", "-o", output, first, second],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(FileManager.default.fileExists(atPath: output))
+		let records = try jsonlObjects(at: debug)
+		#expect(records.count == 2)
+		#expect(records[0]["outputPage"] as? Int == 1)
+		#expect(records[1]["outputPage"] as? Int == 2)
+		#expect(records[0]["outputPageCount"] as? Int == 2)
+		#expect(records[0]["schema"] as? String == "mac-ocr.searchable-pdf.debug")
+		let firstSource = try #require(records[0]["source"] as? [String: Any])
+		let secondSource = try #require(records[1]["source"] as? [String: Any])
+		#expect((firstSource["path"] as? String)?.hasSuffix("hello.png") == true)
+		#expect((secondSource["path"] as? String)?.hasSuffix("document-photo.png") == true)
+		let firstOcr = try #require(records[0]["ocr"] as? [String: Any])
+		let observations = try #require(firstOcr["observations"] as? [[String: Any]])
+		#expect(!observations.isEmpty)
+		let words = observations.first?["words"] as? [[String: Any]]
+		#expect(words?.isEmpty == false)
+	}
+
+	@Test func debugPerInputBatchWritesOneSidecarPerOutputPDF() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let first = try stage("hello.png", in: directory)
+		let second = try stage("document-photo.png", in: directory)
+
+		let result = try TestSupport.run(
+			["searchable-pdf", first, second],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(try jsonlObjects(at: directory + "/hello.ocr.jsonl").count == 1)
+		#expect(try jsonlObjects(at: directory + "/document-photo.ocr.jsonl").count == 1)
+	}
+
+	@Test func debugRejectsStdoutPDFOutput() throws {
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", "-", TestSupport.fixturePath("hello.png")],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("MAC_OCR_DEBUG=1 requires file PDF output"))
+	}
+
 	@Test func stdoutWithMultipleInputsErrors() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -256,5 +314,15 @@ import Testing
 
 	private func listing(_ directory: String) -> String {
 		((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []).joined(separator: ", ")
+	}
+
+	private func jsonlObjects(at path: String) throws -> [[String: Any]] {
+		let text = try String(contentsOfFile: path, encoding: .utf8)
+		return try text.split(separator: "\n").map { line in
+			try #require(
+				JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+				"invalid JSONL record in \(path): \(line)"
+			)
+		}
 	}
 }

@@ -182,6 +182,8 @@ Use `--image-page-dpi <36–2400>` to override image input page sizing when scan
 
 Use `--image-downsample-dpi <36–2400>` to cap the visible image layer resolution for image inputs after page size is known. This can reduce output size while keeping OCR on the original pixels and preserving page size. PDF inputs are not downsampled.
 
+Set `MAC_OCR_DEBUG=1` to debug searchable-PDF generation. Debug mode draws visible OCR boxes into the generated PDF and writes a JSONL sidecar next to each output PDF (`lease.pdf` → `lease.jsonl`). Each JSONL line describes one output page in page order, including source/page metadata, OCR image size, PDF media box, recognized text, line boxes, word boxes, and confidence values. Debug mode requires file output and is rejected with `-o -`.
+
 In non-merge mode, when **no** page needs OCR — a fully born-digital PDF — the input is copied through **byte-for-byte**: annotations (links, form fields), outlines, and metadata are all preserved, and the output is identical to the input. When at least one page needs OCR, or when `--merge` is used, the document is rewritten: page content (vector text, images) is preserved, but annotations, outlines, and document metadata are **not** carried over. Keep born-digital PDFs with fillable forms or heavy linking out of `searchable-pdf` unless you need the rewrite.
 
 The "already has text" check is page-level: a scanned page carrying one small digital element (a Bates stamp, fax header, or page number) counts as born-digital and is skipped, leaving its scanned body unsearchable. Two caveats:

@@ -106,6 +106,7 @@ mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 - **`--image-quality <0–1>`** controls the visible image layer for image inputs only. OCR still uses the original full-resolution image; PDF inputs are not recompressed.
 - **`--image-page-dpi <36–2400>`** overrides image input page sizing only. OCR still uses the original full-resolution image; PDF inputs are unaffected. `--pdf-dpi` remains PDF-page rasterization for OCR.
 - **`--image-downsample-dpi <36–2400>`** caps the visible image layer resolution for image inputs only. OCR and page size are unaffected; PDF inputs are not downsampled.
+- **`MAC_OCR_DEBUG=1`** enables searchable-PDF debugging for file outputs: visible OCR boxes are drawn into the PDF, and a JSONL sidecar is written next to each output PDF (`file.pdf` → `file.jsonl`). The sidecar has one record per output page in page order with source/page metadata, OCR text, line boxes, word boxes, confidence, OCR image size, and PDF media box. Debug mode is rejected with `-o -`.
 - Accepts the same recognition options as OCR (`--fast`, `-l`, `-c`, `--pdf-dpi`, `--roi`, `--password`, custom words, etc.).
 - Status is **interactive-only** on stderr: a live `[page/total]` counter + `name → path` line on a terminal; piped runs are silent on success (errors only) — no quiet flag needed. stdout stays clean for `-o -`. The `ocr` command shows the same counter when results aren't streaming to the terminal.
 
