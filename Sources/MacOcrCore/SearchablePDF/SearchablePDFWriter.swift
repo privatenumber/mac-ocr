@@ -1151,7 +1151,7 @@ public enum SearchablePDF {
 			options.includeWordGeometry = true
 			return options
 		}()
-		guard tiledOCREnabled else {
+		guard tiledOCREnabled, wordOptions.regionOfInterest == nil else {
 			return try await recognize(image, options: wordOptions, source: ObservationSource(pass: "full"))
 		}
 		return try await recognizeTiled(image, options: wordOptions)

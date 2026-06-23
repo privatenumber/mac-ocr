@@ -94,7 +94,7 @@ Image inputs are sized from embedded DPI metadata when available. Images without
 
 Set `MAC_OCR_DEBUG=1` when creating searchable PDFs to draw visible OCR bounding boxes into the PDF and write a JSONL sidecar next to each output PDF. For example, `lease.pdf` gets `lease.jsonl`. The sidecar contains one record per output page in page order, including recognized text, line boxes, word boxes, confidence, OCR image size, and PDF media box. Debug mode requires file output; it is not available with `-o -`.
 
-Set `MAC_OCR_TILED=1` to experiment with an additional tiled OCR pass for searchable PDFs. This can recover small text that Vision misses in full-page context, but may add duplicate or partial text, so inspect the `MAC_OCR_DEBUG=1` JSONL sidecar before relying on it.
+Set `MAC_OCR_TILED=1` to experiment with an additional tiled OCR pass for searchable PDFs. This can recover small text that Vision misses in full-page context, but may add duplicate or partial text, so inspect the `MAC_OCR_DEBUG=1` JSONL sidecar before relying on it. Tiled OCR is skipped when `--roi` is set.
 
 In non-merge mode, pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 
