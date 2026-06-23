@@ -1190,7 +1190,7 @@ public enum SearchablePDF {
 			)
 			for observation in localResult.observations {
 				let remapped = remap(observation, from: tile)
-				guard shouldAcceptTileObservation(remapped) else { continue }
+				guard shouldAcceptTileObservation(remapped, options: options) else { continue }
 				merge(remapped, into: &observations)
 			}
 		}
@@ -1279,11 +1279,16 @@ public enum SearchablePDF {
 		}
 	}
 
-	private static func shouldAcceptTileObservation(_ observation: Observation) -> Bool {
+	private static func shouldAcceptTileObservation(_ observation: Observation, options: OCROptions) -> Bool {
 		guard observation.source?.pass == "tile" else { return true }
 		let text = observation.text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard text.count > 1 else { return false }
 		guard observation.source?.edgeTouching != true else { return false }
+		if let minimumTextHeight = options.minimumTextHeight,
+			observation.boundingBox.height < Double(minimumTextHeight)
+		{
+			return false
+		}
 		return observation.confidence >= 0.3
 	}
 
