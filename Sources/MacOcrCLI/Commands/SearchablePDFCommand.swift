@@ -146,18 +146,21 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 					outputExtension: ".pdf"
 				)
 				try ensureParentDirectory(forFile: path)
+				let debugOutput = debugOutput(forPDFPath: path)
+				defer { debugOutput.map(removeTempDebugOutput) }
 				let data = try await SearchablePDF.render(
 					source: source, options: options, pdfDpi: pdfDpi, password: pdfPassword,
 					ocrAllPages: ocrAllPages,
 					imageQuality: imageQuality,
 					imagePageDpi: imagePageDpi,
 					imageDownsampleDpi: imageDownsampleDpi,
-					debugOptions: debugOptions(forPDFPath: path),
+					debugOptions: debugOutput?.options,
 					onProgress: { reporter.update(done: $0, total: $1) }
 				)
 				// Atomic: a crash mid-write must not replace a previous good
 				// output (e.g. a re-run's [name].ocr.pdf) with a truncated PDF.
 				try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+				try debugOutput.map(commitDebugOutput)
 				reporter.finish(outputPath: path)
 			} catch {
 				// ErrorSink clears the transient counter line itself before
@@ -203,7 +206,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		let tempURL = outputURL.deletingLastPathComponent().appendingPathComponent(
 			".\(outputURL.lastPathComponent).\(UUID().uuidString).tmp"
 		)
+		let debugOutput = debugOutput(forPDFPath: path)
 		defer { try? FileManager.default.removeItem(at: tempURL) }
+		defer { debugOutput.map(removeTempDebugOutput) }
 		try await SearchablePDF.writeMerged(
 			sources: sources,
 			to: tempURL,
@@ -214,11 +219,21 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			imageQuality: imageQuality,
 			imagePageDpi: imagePageDpi,
 			imageDownsampleDpi: imageDownsampleDpi,
-			debugOptions: debugOptions(forPDFPath: path),
+			debugOptions: debugOutput?.options,
 			onProgress: { reporter.update(done: $0, total: $1) }
 		)
 		try replaceFile(at: outputURL, with: tempURL)
+		try debugOutput.map(commitDebugOutput)
 		reporter.finish(outputPath: path)
+	}
+
+	private struct DebugOutput {
+		let finalURL: URL
+		let tempURL: URL
+
+		var options: SearchablePDF.DebugOptions {
+			SearchablePDF.DebugOptions(jsonlURL: tempURL)
+		}
 	}
 
 	private var debugEnabled: Bool {
@@ -235,11 +250,22 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		}
 	}
 
-	private func debugOptions(forPDFPath path: String) -> SearchablePDF.DebugOptions? {
+	private func debugOutput(forPDFPath path: String) -> DebugOutput? {
 		guard debugEnabled else { return nil }
 		let pdfURL = URL(fileURLWithPath: path)
-		let jsonlURL = pdfURL.deletingPathExtension().appendingPathExtension("jsonl")
-		return SearchablePDF.DebugOptions(jsonlURL: jsonlURL)
+		let finalURL = pdfURL.deletingPathExtension().appendingPathExtension("jsonl")
+		let tempURL = finalURL.deletingLastPathComponent().appendingPathComponent(
+			".\(finalURL.lastPathComponent).\(UUID().uuidString).tmp"
+		)
+		return DebugOutput(finalURL: finalURL, tempURL: tempURL)
+	}
+
+	private func removeTempDebugOutput(_ debugOutput: DebugOutput) {
+		try? FileManager.default.removeItem(at: debugOutput.tempURL)
+	}
+
+	private func commitDebugOutput(_ debugOutput: DebugOutput) throws {
+		try replaceFile(at: debugOutput.finalURL, with: debugOutput.tempURL)
 	}
 
 	private func replaceFile(at outputURL: URL, with tempURL: URL) throws {

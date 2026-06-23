@@ -83,7 +83,19 @@ public enum SearchablePDF {
 					break
 				}
 			}
-			if allPagesHaveText, debugOptions == nil, let original = originalData() {
+			if allPagesHaveText, let original = originalData() {
+				if let debugOptions {
+					let debugWriter = try DebugWriter(options: debugOptions)
+					defer { debugWriter.close() }
+					try writeSkippedPDFDebugRecords(
+						document: document,
+						source: source,
+						sourceIndex: 1,
+						outputPageOffset: 0,
+						outputPageCount: pageCount,
+						writer: debugWriter
+					)
+				}
 				onProgress?(0, pageCount)
 				onProgress?(pageCount, pageCount)
 				return original
@@ -482,6 +494,42 @@ public enum SearchablePDF {
 		}
 	}
 
+	private static func writeSkippedPDFDebugRecords(
+		document: CGPDFDocument,
+		source: ImageSource,
+		sourceIndex: Int,
+		outputPageOffset: Int,
+		outputPageCount: Int,
+		writer: DebugWriter
+	) throws {
+		let sourcePageCount = document.numberOfPages
+		for pageNumber in 1...sourcePageCount {
+			guard let page = document.page(at: pageNumber) else {
+				throw MessageError("Could not load PDF page \(pageNumber)")
+			}
+			let mediaBox = displayBox(for: page)
+			try writer.write(
+				debugRecord(
+					context: DebugContext(
+						writer: writer,
+						source: source,
+						sourceIndex: sourceIndex,
+						outputPageOffset: outputPageOffset,
+						outputPageCount: outputPageCount
+					),
+					sourcePage: pageNumber,
+					sourcePageCount: sourcePageCount,
+					outputPage: outputPageOffset + pageNumber,
+					outputPageCount: outputPageCount,
+					ocrImage: nil,
+					mediaBox: mediaBox,
+					ocr: OCRResult(text: "", observations: []),
+					skipped: true,
+					skipReason: "existing-text-layer"
+				))
+		}
+	}
+
 	private static func resolveProducer(
 		plan: MergeSourcePlan,
 		password: String?,
@@ -545,15 +593,7 @@ public enum SearchablePDF {
 				guard let page = document.page(at: pageNumber) else {
 					throw MessageError("Could not load PDF page \(pageNumber)")
 				}
-				let cropBox = page.getBoxRect(.cropBox)
-				// Widen to Int before abs: abs(Int32.min) traps on a hostile /Rotate.
-				let rotated = abs(Int(page.rotationAngle)) % 180 == 90
-				let displayBox = CGRect(
-					x: 0,
-					y: 0,
-					width: rotated ? cropBox.height : cropBox.width,
-					height: rotated ? cropBox.width : cropBox.height
-				)
+				let displayBox = displayBox(for: page)
 				plans.append(
 					PagePlan(
 						page: page,
@@ -928,6 +968,18 @@ public enum SearchablePDF {
 			ocrImage: ocrImage,
 			pdfPage: DebugPDFPage(mediaBox: DebugRect(mediaBox)),
 			ocr: DebugOCR(ocr: ocr, skipped: skipped, skipReason: skipReason)
+		)
+	}
+
+	private static func displayBox(for page: CGPDFPage) -> CGRect {
+		let cropBox = page.getBoxRect(.cropBox)
+		// Widen to Int before abs: abs(Int32.min) traps on a hostile /Rotate.
+		let rotated = abs(Int(page.rotationAngle)) % 180 == 90
+		return CGRect(
+			x: 0,
+			y: 0,
+			width: rotated ? cropBox.height : cropBox.width,
+			height: rotated ? cropBox.width : cropBox.height
 		)
 	}
 
