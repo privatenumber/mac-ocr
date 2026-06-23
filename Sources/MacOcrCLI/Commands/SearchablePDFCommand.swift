@@ -254,6 +254,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	}
 
 	private func validateMergedOutputRouting() throws {
+		if resolveInputSources().contains(.stdin) {
+			throw ValidationError("`--merge` does not support stdin input. Pass file paths in the desired page order.")
+		}
 		guard let output else {
 			throw ValidationError("`--merge` requires -o <file.pdf> or -o -.")
 		}

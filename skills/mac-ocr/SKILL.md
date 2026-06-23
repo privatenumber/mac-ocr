@@ -98,7 +98,7 @@ mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 ```
 
 - **`-o <dest>`**: path, `[name]` template, directory, or `-` for stdout. A fixed path or `-` takes a single input; multiple inputs need a directory or `[name]` template.
-- **`--merge`** combines inputs into one searchable PDF in exact argument order. It requires `-o <file.pdf>` or `-o -`; directory and template outputs are rejected.
+- **`--merge`** combines file/URL inputs into one searchable PDF in exact argument order. It requires `-o <file.pdf>` or `-o -`; directory, template, and stdin inputs are rejected. Merged PDFs are rewritten, so annotations/outlines/metadata are not preserved.
 - **PDF inputs** keep their original pages verbatim (vector content is not re-rasterized); only an invisible text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to feed OCR.
 - **Fully born-digital PDFs pass through byte-for-byte** (annotations/links/forms/outlines preserved). When any page needs OCR, the rewrite preserves page content but **not** annotations, outlines, or metadata.
 - **`--ocr-all-pages`** overrides that skip and OCRs every page — needed for hybrid pages (a scan plus a small digital stamp/page number, which counts as "has text"); existing digital text may then appear twice in copy/search.

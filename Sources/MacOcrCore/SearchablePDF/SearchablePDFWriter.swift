@@ -122,20 +122,10 @@ public enum SearchablePDF {
 			throw MessageError("No input sources were provided")
 		}
 
-		var producers: [PageProducer] = []
-		producers.reserveCapacity(sources.count)
+		var pageCounts: [Int] = []
+		pageCounts.reserveCapacity(sources.count)
 		for source in sources {
-			let producer = try await resolveProducer(
-				source,
-				password: password,
-				imageQuality: imageQuality,
-				imagePageDpi: imagePageDpi,
-				imageDownsampleDpi: imageDownsampleDpi
-			)
-			producers.append(producer)
-		}
-		let pageCounts = try zip(producers, sources).map { producer, source in
-			try pageCount(for: producer, displayName: source.displayName)
+			pageCounts.append(try await pageCount(for: source, password: password))
 		}
 		let totalPages = pageCounts.reduce(0, +)
 
@@ -148,7 +138,14 @@ public enum SearchablePDF {
 
 		onProgress?(0, totalPages)
 		var completedBeforeSource = 0
-		for (producer, source) in zip(producers, sources) {
+		for source in sources {
+			let producer = try await resolveProducer(
+				source,
+				password: password,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
+			)
 			let pagesWritten = try await appendSource(
 				producer,
 				displayName: source.displayName,
@@ -214,16 +211,44 @@ public enum SearchablePDF {
 		let value: T
 	}
 
-	private static func pageCount(for producer: PageProducer, displayName: String) throws -> Int {
-		switch producer {
-		case .image:
-			return 1
-		case .pdf(let document, _, _):
+	private static func pageCount(for source: ImageSource, password: String?) async throws -> Int {
+		switch source {
+		case .file(let path):
+			let url = URL(fileURLWithPath: path)
+			guard FileManager.default.fileExists(atPath: url.path) else {
+				throw MessageError("No such file: \(path)")
+			}
+			guard isPDFFile(url: url) else { return 1 }
+			guard let document = CGPDFDocument(url as CFURL) else {
+				throw MessageError("Cannot read PDF: \(path)")
+			}
+			try unlockPDF(document, password: password, label: path)
 			let pageCount = document.numberOfPages
 			guard pageCount > 0 else {
-				throw MessageError("PDF has no pages: \(displayName)")
+				throw MessageError("PDF has no pages: \(path)")
 			}
 			return pageCount
+
+		case .url(let urlString):
+			guard let remoteURL = URL(string: urlString) else {
+				throw MessageError("Invalid URL: \(urlString)")
+			}
+			let data = try await fetchRemoteData(from: remoteURL, label: urlString)
+			guard isPDFData(data) else { return 1 }
+			guard let provider = CGDataProvider(data: data as CFData),
+				let document = CGPDFDocument(provider)
+			else {
+				throw MessageError("Cannot read PDF from \(urlString)")
+			}
+			try unlockPDF(document, password: password, label: urlString)
+			let pageCount = document.numberOfPages
+			guard pageCount > 0 else {
+				throw MessageError("PDF has no pages: \(urlString)")
+			}
+			return pageCount
+
+		case .stdin:
+			throw MessageError("--merge does not support stdin input")
 		}
 	}
 

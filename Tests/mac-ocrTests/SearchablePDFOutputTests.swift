@@ -122,6 +122,17 @@ import Testing
 		#expect(result.stderr.contains("`--merge` writes one PDF and does not support output templates"))
 	}
 
+	@Test func mergeRejectsStdinInput() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let output = directory + "/merged.pdf"
+		let data = try Data(contentsOf: URL(fileURLWithPath: TestSupport.fixturePath("hello.png")))
+		let result = try TestSupport.run(["searchable-pdf", "--merge", "-o", output, "-"], stdinData: data)
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("`--merge` does not support stdin input"))
+		#expect(!FileManager.default.fileExists(atPath: output))
+	}
+
 	@Test func mergeFailureDoesNotWriteOutput() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }

@@ -88,7 +88,7 @@ mac-ocr searchable-pdf scan.pdf -o - > scan.pdf      # stdout
 
 A fixed path or `-` (stdout) takes a single input; for multiple inputs use a directory or a `[name]` template.
 
-Pass `--merge` to combine multiple inputs into one searchable PDF. Merged pages follow the exact argument order you pass; `mac-ocr` never sorts or reorders inputs.
+Pass `--merge` to combine multiple file/URL inputs into one searchable PDF. Merged pages follow the exact argument order you pass; `mac-ocr` never sorts or reorders inputs.
 
 Image inputs are sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 
