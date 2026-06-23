@@ -68,7 +68,7 @@ grep -rli "invoice" ~/Screenshots                    # then search with normal t
 
 ## Create a searchable PDF
 
-`searchable-pdf` takes a PDF or an image and writes a PDF that looks identical to the source but whose text is selectable and searchable. By default it writes `[name].ocr.pdf` next to each input — one searchable PDF per input (inputs are never merged):
+`searchable-pdf` takes a PDF or an image and writes a PDF that looks identical to the source but whose text is selectable and searchable. By default it writes `[name].ocr.pdf` next to each input — one searchable PDF per input:
 
 ```sh
 mac-ocr searchable-pdf scan.pdf            # writes scan.ocr.pdf
@@ -86,13 +86,13 @@ mac-ocr searchable-pdf scan.pdf -o searchable.pdf    # fixed path
 mac-ocr searchable-pdf scan.pdf -o - > scan.pdf      # stdout
 ```
 
-A fixed path or `-` (stdout) takes a single input; for multiple inputs use a directory or a `[name]` template.
+A fixed path or `-` (stdout) takes a single input in non-merge mode; for multiple per-input outputs use a directory or a `[name]` template.
 
 Pass `--merge` to combine multiple file/URL inputs into one searchable PDF. Merged pages follow the exact argument order you pass; `mac-ocr` never sorts or reorders inputs.
 
 Image inputs are sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 
-Pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
+In non-merge mode, pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 
 In an interactive terminal you get a live `[page/total]` progress counter. Piped or redirected runs are silent on success, so scripts stay clean.
 

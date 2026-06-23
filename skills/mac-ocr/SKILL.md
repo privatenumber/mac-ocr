@@ -85,7 +85,7 @@ Bounding boxes are normalized `0–1` with a **top-left origin**. To get pixels:
 
 ## searchable-pdf
 
-Writes a PDF that looks identical to the source but with selectable, searchable text. One searchable PDF per input — inputs are never merged. By default writes `[name].ocr.pdf` next to each input.
+Writes a PDF that looks identical to the source but with selectable, searchable text. By default writes one `[name].ocr.pdf` per input; pass `--merge` to combine inputs into one PDF.
 
 ```sh
 mac-ocr searchable-pdf scan.pdf                      # writes scan.ocr.pdf
@@ -99,8 +99,8 @@ mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 
 - **`-o <dest>`**: path, `[name]` template, directory, or `-` for stdout. A fixed path or `-` takes a single input; multiple inputs need a directory or `[name]` template.
 - **`--merge`** combines file/URL inputs into one searchable PDF in exact argument order. It requires `-o <file.pdf>` or `-o -`; directory, template, and stdin inputs are rejected. Merged PDFs are rewritten, so annotations/outlines/metadata are not preserved.
-- **PDF inputs** keep their original pages verbatim (vector content is not re-rasterized); only an invisible text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to feed OCR.
-- **Fully born-digital PDFs pass through byte-for-byte** (annotations/links/forms/outlines preserved). When any page needs OCR, the rewrite preserves page content but **not** annotations, outlines, or metadata.
+- **PDF inputs** keep their original pages verbatim in non-merge mode (vector content is not re-rasterized); only an invisible text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to feed OCR.
+- **Fully born-digital PDFs pass through byte-for-byte in non-merge mode** (annotations/links/forms/outlines preserved). When any page needs OCR or `--merge` is used, the rewrite preserves page content but **not** annotations, outlines, or metadata.
 - **`--ocr-all-pages`** overrides that skip and OCRs every page — needed for hybrid pages (a scan plus a small digital stamp/page number, which counts as "has text"); existing digital text may then appear twice in copy/search.
 - **Image inputs** become one page, sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 - **`--image-quality <0–1>`** controls the visible image layer for image inputs only. OCR still uses the original full-resolution image; PDF inputs are not recompressed.
