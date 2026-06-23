@@ -126,6 +126,7 @@ Both OCR and `searchable-pdf` accept the recognition options:
 | `--ocr-all-pages` | OCR every page, including pages that already have selectable text (skipped by default) |
 | `--image-quality <0–1>` | Visible image layer quality for image inputs. OCR still uses the original full-resolution image; PDF inputs are not recompressed. |
 | `--image-page-dpi <36–2400>` | DPI to use for image input page sizing. OCR still uses the original full-resolution image; PDF inputs are unaffected. |
+| `--image-downsample-dpi <36–2400>` | Maximum DPI for the visible image layer of image inputs. OCR and page size are unaffected; PDF inputs are not downsampled. |
 
 List the recognition languages available on your macOS version with `mac-ocr languages` (add `--fast` for the fast recognizer's set).
 

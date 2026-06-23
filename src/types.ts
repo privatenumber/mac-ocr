@@ -129,4 +129,10 @@ export type SearchablePdfOptions = CommonOptions & {
 	 * full-resolution image. PDF inputs are not affected.
 	 */
 	imagePageDpi?: number;
+
+	/**
+	 * Maximum DPI for the visible image layer of image inputs. OCR and page size
+	 * are not affected. PDF inputs are not downsampled.
+	 */
+	imageDownsampleDpi?: number;
 };

@@ -25,6 +25,9 @@ export const createSearchablePdf = async (
 	if (options?.imagePageDpi !== undefined) {
 		args.push('--image-page-dpi', String(options.imagePageDpi));
 	}
+	if (options?.imageDownsampleDpi !== undefined) {
+		args.push('--image-downsample-dpi', String(options.imageDownsampleDpi));
+	}
 	args.push('-o', '-', '-');
 	const stdout = await collectStdout(
 		spawnBinary(args, {

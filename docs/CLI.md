@@ -177,6 +177,8 @@ For image inputs, `--image-quality <0–1>` re-encodes the visible image layer a
 
 Use `--image-page-dpi <36–2400>` to override image input page sizing when scanner DPI metadata is missing or wrong. This does not change the image pixels used for OCR. `--pdf-dpi` is separate: it controls how PDF pages are rasterized internally before OCR.
 
+Use `--image-downsample-dpi <36–2400>` to cap the visible image layer resolution for image inputs after page size is known. This can reduce output size while keeping OCR on the original pixels and preserving page size. PDF inputs are not downsampled.
+
 When **no** page needs OCR — a fully born-digital PDF — the input is copied through **byte-for-byte**: annotations (links, form fields), outlines, and metadata are all preserved, and the output is identical to the input. When at least one page needs OCR, the whole document is rewritten: page content (vector text, images) is preserved, but annotations, outlines, and document metadata are **not** carried over. Keep born-digital PDFs with fillable forms or heavy linking out of `searchable-pdf` unless you need the rewrite.
 
 The "already has text" check is page-level: a scanned page carrying one small digital element (a Bates stamp, fax header, or page number) counts as born-digital and is skipped, leaving its scanned body unsearchable. Two caveats:
@@ -195,7 +197,7 @@ The "already has text" check is page-level: a scanned page carrying one small di
 | `-` | single input → stdout (refused on a terminal) |
 | fixed path or `-`, with ≥2 inputs | error — use a directory or `[name]` template |
 
-Also accepts `--ocr-all-pages` (above), `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
+Also accepts `--ocr-all-pages` (above), `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
 
 ### Progress and status
 

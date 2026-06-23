@@ -53,6 +53,12 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	)
 	var imagePageDpi: Double?
 
+	@Option(
+		name: .long,
+		help: "Maximum DPI for the visible image layer of image inputs (36–2400). OCR and page size are unaffected. PDF inputs are not downsampled."
+	)
+	var imageDownsampleDpi: Double?
+
 	@OptionGroup var recognition: RecognitionOptions
 
 	@Option(name: .long, help: "PDF rendering DPI for OCR: 'auto' (default) or an integer 72–600.")
@@ -65,6 +71,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		try validatePdfDpi()
 		try imageQuality?.requireUnitInterval(name: "--image-quality")
 		try imagePageDpi?.requireDPI(name: "--image-page-dpi")
+		try imageDownsampleDpi?.requireDPI(name: "--image-downsample-dpi")
 		if let roi {
 			_ = try parseRegionOfInterest(roi)
 		}
@@ -91,6 +98,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				ocrAllPages: ocrAllPages,
 				imageQuality: imageQuality,
 				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi,
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -115,6 +123,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 					ocrAllPages: ocrAllPages,
 					imageQuality: imageQuality,
 					imagePageDpi: imagePageDpi,
+					imageDownsampleDpi: imageDownsampleDpi,
 					onProgress: { reporter.update(done: $0, total: $1) }
 				)
 				let path = try resolveOutputPath(

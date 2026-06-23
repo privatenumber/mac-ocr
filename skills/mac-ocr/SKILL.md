@@ -103,6 +103,7 @@ mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout (refused o
 - **Image inputs** become one page, sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 - **`--image-quality <0–1>`** controls the visible image layer for image inputs only. OCR still uses the original full-resolution image; PDF inputs are not recompressed.
 - **`--image-page-dpi <36–2400>`** overrides image input page sizing only. OCR still uses the original full-resolution image; PDF inputs are unaffected. `--pdf-dpi` remains PDF-page rasterization for OCR.
+- **`--image-downsample-dpi <36–2400>`** caps the visible image layer resolution for image inputs only. OCR and page size are unaffected; PDF inputs are not downsampled.
 - Accepts the same recognition options as OCR (`--fast`, `-l`, `-c`, `--pdf-dpi`, `--roi`, `--password`, custom words, etc.).
 - Status is **interactive-only** on stderr: a live `[page/total]` counter + `name → path` line on a terminal; piped runs are silent on success (errors only) — no quiet flag needed. stdout stays clean for `-o -`. The `ocr` command shows the same counter when results aren't streaming to the terminal.
 
@@ -130,7 +131,7 @@ const langs = await supportedLanguages()                  // → string[] (ocr +
 ```
 
 - `ocr()` throws if given a multi-page PDF — use `ocr.pages()`.
-- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `imageQuality` and `imagePageDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
+- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
 - Failures throw `MacOcrError` with `.kind` (`'usage'`, `'runtime'`, `'unavailable'`, …) and `.stderr`.
 
 ## Patterns

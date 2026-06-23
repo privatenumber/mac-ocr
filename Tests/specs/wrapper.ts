@@ -89,6 +89,12 @@ await describe('wrapper (shim binary)', async () => {
 		expect(Buffer.from(pdf).toString()).toContain('--image-page-dpi 300');
 	});
 
+	await test('createSearchablePdf forwards imageDownsampleDpi', async () => {
+		await using wrapper = await importWrapper(shShim(String.raw`printf '%%PDF- argv=%s' "$*"`));
+		const pdf = await wrapper.api.createSearchablePdf(Buffer.from('x'), { imageDownsampleDpi: 200 });
+		expect(Buffer.from(pdf).toString()).toContain('--image-downsample-dpi 200');
+	});
+
 	await test('ocr() fails multi-page input from the first page, without waiting', async () => {
 		// Page 1 announces pageCount 3; the shim then stalls. The wrapper must
 		// reject from pageCount alone instead of waiting for page 2. (`exec`

@@ -44,15 +44,18 @@ public enum SearchablePDF {
 		ocrAllPages: Bool = false,
 		imageQuality: Double? = nil,
 		imagePageDpi: Double? = nil,
+		imageDownsampleDpi: Double? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		try validateImageQuality(imageQuality)
-		try validateImagePageDPI(imagePageDpi)
+		try validateImageDPI(imagePageDpi, name: "--image-page-dpi")
+		try validateImageDPI(imageDownsampleDpi, name: "--image-downsample-dpi")
 		let producer = try await resolveProducer(
 			source,
 			password: password,
 			imageQuality: imageQuality,
-			imagePageDpi: imagePageDpi
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi
 		)
 
 		if case .pdf(let document, _, let originalData) = producer, !ocrAllPages {
@@ -284,7 +287,8 @@ public enum SearchablePDF {
 		_ source: ImageSource,
 		password: String?,
 		imageQuality: Double?,
-		imagePageDpi: Double?
+		imagePageDpi: Double?,
+		imageDownsampleDpi: Double?
 	) async throws -> PageProducer {
 		switch source {
 		case .file(let path):
@@ -310,7 +314,14 @@ public enum SearchablePDF {
 			else {
 				throw MessageError("Cannot read image: \(path)")
 			}
-			return .image(try imagePage(from: source, label: path, imageQuality: imageQuality, imagePageDpi: imagePageDpi))
+			return .image(
+				try imagePage(
+					from: source,
+					label: path,
+					imageQuality: imageQuality,
+					imagePageDpi: imagePageDpi,
+					imageDownsampleDpi: imageDownsampleDpi
+				))
 
 		case .url(let urlString):
 			guard let remoteURL = URL(string: urlString) else {
@@ -322,7 +333,8 @@ public enum SearchablePDF {
 				label: urlString,
 				password: password,
 				imageQuality: imageQuality,
-				imagePageDpi: imagePageDpi
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
 			)
 
 		case .stdin:
@@ -335,7 +347,8 @@ public enum SearchablePDF {
 				label: "stdin",
 				password: password,
 				imageQuality: imageQuality,
-				imagePageDpi: imagePageDpi
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
 			)
 		}
 	}
@@ -345,7 +358,8 @@ public enum SearchablePDF {
 		label: String,
 		password: String?,
 		imageQuality: Double?,
-		imagePageDpi: Double?
+		imagePageDpi: Double?,
+		imageDownsampleDpi: Double?
 	) throws -> PageProducer {
 		if isPDFData(data) {
 			guard let provider = CGDataProvider(data: data as CFData),
@@ -369,7 +383,14 @@ public enum SearchablePDF {
 		else {
 			throw MessageError("Cannot read image from \(label)")
 		}
-		return .image(try imagePage(from: source, label: label, imageQuality: imageQuality, imagePageDpi: imagePageDpi))
+		return .image(
+			try imagePage(
+				from: source,
+				label: label,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
+			))
 	}
 
 	private static func validateImageQuality(_ value: Double?) throws {
@@ -379,10 +400,10 @@ public enum SearchablePDF {
 		}
 	}
 
-	private static func validateImagePageDPI(_ value: Double?) throws {
+	private static func validateImageDPI(_ value: Double?, name: String) throws {
 		guard let value else { return }
 		guard value.isFinite, value >= 36, value <= 2400 else {
-			throw MessageError("--image-page-dpi must be between 36 and 2400")
+			throw MessageError("\(name) must be between 36 and 2400")
 		}
 	}
 
@@ -390,12 +411,20 @@ public enum SearchablePDF {
 		from source: CGImageSource,
 		label: String,
 		imageQuality: Double?,
-		imagePageDpi: Double?
+		imagePageDpi: Double?,
+		imageDownsampleDpi: Double?
 	) throws -> ImagePage {
 		guard let image = uprightImage(from: source) else {
 			throw MessageError("Cannot read image from \(label)")
 		}
-		let visibleImage = imageQuality == nil ? image : flattenOverWhite(image)
+		let mediaBox = imageMediaBox(source: source, image: image, imagePageDpi: imagePageDpi)
+		let downsampled = downsampleVisibleImage(
+			from: source,
+			fallback: image,
+			mediaBox: mediaBox,
+			imageDownsampleDpi: imageDownsampleDpi
+		)
+		let visibleImage = imageQuality == nil ? downsampled : flattenOverWhite(downsampled)
 		let data = try makeVisibleImagePDF(image: visibleImage, imageQuality: imageQuality)
 		guard let provider = CGDataProvider(data: data as CFData),
 			let document = CGPDFDocument(provider),
@@ -405,7 +434,7 @@ public enum SearchablePDF {
 		}
 		return ImagePage(
 			image: image,
-			mediaBox: imageMediaBox(source: source, image: image, imagePageDpi: imagePageDpi),
+			mediaBox: mediaBox,
 			visiblePDFData: data,
 			visiblePDFDocument: document,
 			visiblePDFPage: page
@@ -466,6 +495,29 @@ public enum SearchablePDF {
 		default:
 			return false
 		}
+	}
+
+	private static func downsampleVisibleImage(
+		from source: CGImageSource,
+		fallback image: CGImage,
+		mediaBox: CGRect,
+		imageDownsampleDpi: Double?
+	) -> CGImage {
+		guard let imageDownsampleDpi else { return image }
+		let targetWidth = Int((mediaBox.width / 72 * CGFloat(imageDownsampleDpi)).rounded(.up))
+		let targetHeight = Int((mediaBox.height / 72 * CGFloat(imageDownsampleDpi)).rounded(.up))
+		let targetMaxDimension = max(targetWidth, targetHeight)
+		let sourceMaxDimension = max(image.width, image.height)
+		guard targetMaxDimension > 0, targetMaxDimension < sourceMaxDimension else {
+			return image
+		}
+
+		let options: [CFString: Any] = [
+			kCGImageSourceCreateThumbnailWithTransform: true,
+			kCGImageSourceCreateThumbnailFromImageAlways: true,
+			kCGImageSourceThumbnailMaxPixelSize: targetMaxDimension,
+		]
+		return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) ?? image
 	}
 
 	private static func makeVisibleImagePDF(image: CGImage, imageQuality: Double?) throws -> Data {
