@@ -267,6 +267,10 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		URL(fileURLWithPath: path).standardizedFileURL.path
 	}
 
+	private func collisionKey(_ path: String) -> String {
+		normalizedFilePath(path).lowercased()
+	}
+
 	private func removeTempDebugOutput(_ debugOutput: DebugOutput) {
 		try? FileManager.default.removeItem(at: debugOutput.tempURL)
 	}
@@ -393,24 +397,25 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			pdfPaths.append(normalizedFilePath(path))
 		}
 
-		let pdfPathSet = Set(pdfPaths)
+		let pdfPathSet = Set(pdfPaths.map(collisionKey))
 		var sidecarPaths: Set<String> = []
 		for path in pdfPaths {
 			let sidecarPath = debugSidecarURL(forPDFPath: path).path
-			if sidecarPath == path || pdfPathSet.contains(sidecarPath) {
+			let sidecarKey = collisionKey(sidecarPath)
+			if sidecarKey == collisionKey(path) || pdfPathSet.contains(sidecarKey) {
 				throw ValidationError("MAC_OCR_DEBUG=1 sidecar '\(sidecarPath)' would overwrite a PDF output. Use a .pdf output path.")
 			}
-			if sidecarPaths.contains(sidecarPath) {
+			if sidecarPaths.contains(sidecarKey) {
 				throw ValidationError("MAC_OCR_DEBUG=1 produces duplicate sidecar output '\(sidecarPath)'. Use distinct PDF output paths.")
 			}
-			sidecarPaths.insert(sidecarPath)
+			sidecarPaths.insert(sidecarKey)
 		}
 	}
 
 	private func validateDebugSidecarDoesNotReplacePDF(_ path: String) throws {
 		guard debugEnabled else { return }
 		let sidecarPath = debugSidecarURL(forPDFPath: path).path
-		if sidecarPath == normalizedFilePath(path) {
+		if collisionKey(sidecarPath) == collisionKey(path) {
 			throw ValidationError("MAC_OCR_DEBUG=1 sidecar '\(sidecarPath)' would overwrite the PDF output. Use a .pdf output path.")
 		}
 	}

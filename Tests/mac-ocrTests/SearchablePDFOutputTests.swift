@@ -207,7 +207,7 @@ import Testing
 	}
 
 	@Test func debugRejectsSidecarCollidingWithPDFOutput() throws {
-		let output = "mac-ocr-debug-collision-\(UUID().uuidString)/out.jsonl"
+		let output = "mac-ocr-debug-collision-\(UUID().uuidString)/out.JSONL"
 		defer { try? FileManager.default.removeItem(atPath: (output as NSString).deletingLastPathComponent) }
 		let result = try TestSupport.run(
 			["searchable-pdf", "-o", output, TestSupport.fixturePath("hello.png")],
