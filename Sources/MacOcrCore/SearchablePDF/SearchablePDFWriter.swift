@@ -83,7 +83,7 @@ public enum SearchablePDF {
 					break
 				}
 			}
-			if allPagesHaveText, let original = originalData() {
+			if allPagesHaveText, debugOptions == nil, let original = originalData() {
 				onProgress?(0, pageCount)
 				onProgress?(pageCount, pageCount)
 				return original

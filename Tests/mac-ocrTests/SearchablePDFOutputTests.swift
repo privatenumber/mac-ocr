@@ -1,3 +1,5 @@
+import CoreGraphics
+import CoreText
 import Foundation
 import PDFKit
 import Testing
@@ -204,6 +206,29 @@ import Testing
 		#expect(result.stderr.contains("MAC_OCR_DEBUG=1 requires file PDF output"))
 	}
 
+	@Test func debugBornDigitalPdfWritesSkippedPageRecords() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = directory + "/born-digital.pdf"
+		let output = directory + "/multipage.ocr.pdf"
+		let debug = directory + "/multipage.ocr.jsonl"
+		try makeBornDigitalPDF().write(to: URL(fileURLWithPath: input))
+
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", output, input],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		let records = try jsonlObjects(at: debug)
+		#expect(records.count == 1)
+		for record in records {
+			let ocr = try #require(record["ocr"] as? [String: Any])
+			#expect(ocr["skipped"] as? Bool == true)
+			#expect(ocr["skipReason"] as? String == "existing-text-layer")
+		}
+	}
+
 	@Test func stdoutWithMultipleInputsErrors() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -324,5 +349,24 @@ import Testing
 				"invalid JSONL record in \(path): \(line)"
 			)
 		}
+	}
+
+	private func makeBornDigitalPDF() -> Data {
+		let data = NSMutableData()
+		var mediaBox = CGRect(x: 0, y: 0, width: 300, height: 120)
+		let context = CGContext(consumer: CGDataConsumer(data: data as CFMutableData)!, mediaBox: &mediaBox, nil)!
+		context.beginPDFPage(nil)
+		context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+		context.fill(mediaBox)
+		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+		let font = CTFontCreateWithName("Helvetica" as CFString, 42, nil)
+		let line = CTLineCreateWithAttributedString(
+			NSAttributedString(string: "Hello World", attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font])
+		)
+		context.textPosition = CGPoint(x: 20, y: 45)
+		CTLineDraw(line, context)
+		context.endPDFPage()
+		context.closePDF()
+		return data as Data
 	}
 }
