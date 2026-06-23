@@ -94,6 +94,7 @@ const fastLanguages = await supportedLanguages({ fast: true })
 |---|---|---|
 | `ocrAllPages` | `boolean` | OCR every page, including pages that already have selectable text (skipped by default). For hybrid scan-plus-stamp pages; existing digital text may appear twice in copy/search |
 | `imageQuality` | `number` | Visible image layer quality for image inputs (`0`–`1`). OCR still uses the original full-resolution image; PDF inputs are not recompressed |
+| `imagePageDpi` | `number` | DPI to use for image input page sizing. OCR still uses the original full-resolution image; PDF inputs are not affected |
 
 `supportedLanguages` accepts only `{ fast?: boolean }`.
 

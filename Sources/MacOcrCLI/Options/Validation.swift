@@ -21,6 +21,13 @@ extension Double {
 			throw ValidationError("\(name) must be between 0.0 and 1.0")
 		}
 	}
+
+	/// Throw a `ValidationError` if the value is not a practical image DPI.
+	func requireDPI(name: String) throws {
+		guard isFinite, self >= 36, self <= 2400 else {
+			throw ValidationError("\(name) must be between 36 and 2400")
+		}
+	}
 }
 
 /// Shared input-source resolution: map file arguments to `ImageSource`s, and

@@ -43,10 +43,17 @@ public enum SearchablePDF {
 		password: String? = nil,
 		ocrAllPages: Bool = false,
 		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		try validateImageQuality(imageQuality)
-		let producer = try await resolveProducer(source, password: password, imageQuality: imageQuality)
+		try validateImagePageDPI(imagePageDpi)
+		let producer = try await resolveProducer(
+			source,
+			password: password,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi
+		)
 
 		if case .pdf(let document, _, let originalData) = producer, !ocrAllPages {
 			let pageCount = document.numberOfPages
@@ -276,7 +283,8 @@ public enum SearchablePDF {
 	private static func resolveProducer(
 		_ source: ImageSource,
 		password: String?,
-		imageQuality: Double?
+		imageQuality: Double?,
+		imagePageDpi: Double?
 	) async throws -> PageProducer {
 		switch source {
 		case .file(let path):
@@ -302,21 +310,33 @@ public enum SearchablePDF {
 			else {
 				throw MessageError("Cannot read image: \(path)")
 			}
-			return .image(try imagePage(from: source, label: path, imageQuality: imageQuality))
+			return .image(try imagePage(from: source, label: path, imageQuality: imageQuality, imagePageDpi: imagePageDpi))
 
 		case .url(let urlString):
 			guard let remoteURL = URL(string: urlString) else {
 				throw MessageError("Invalid URL: \(urlString)")
 			}
 			let data = try await fetchRemoteData(from: remoteURL, label: urlString)
-			return try producer(fromData: data, label: urlString, password: password, imageQuality: imageQuality)
+			return try producer(
+				fromData: data,
+				label: urlString,
+				password: password,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi
+			)
 
 		case .stdin:
 			let data = try readAllStandardInput()
 			guard !data.isEmpty else {
 				throw MessageError("No data received on stdin")
 			}
-			return try producer(fromData: data, label: "stdin", password: password, imageQuality: imageQuality)
+			return try producer(
+				fromData: data,
+				label: "stdin",
+				password: password,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi
+			)
 		}
 	}
 
@@ -324,7 +344,8 @@ public enum SearchablePDF {
 		fromData data: Data,
 		label: String,
 		password: String?,
-		imageQuality: Double?
+		imageQuality: Double?,
+		imagePageDpi: Double?
 	) throws -> PageProducer {
 		if isPDFData(data) {
 			guard let provider = CGDataProvider(data: data as CFData),
@@ -348,7 +369,7 @@ public enum SearchablePDF {
 		else {
 			throw MessageError("Cannot read image from \(label)")
 		}
-		return .image(try imagePage(from: source, label: label, imageQuality: imageQuality))
+		return .image(try imagePage(from: source, label: label, imageQuality: imageQuality, imagePageDpi: imagePageDpi))
 	}
 
 	private static func validateImageQuality(_ value: Double?) throws {
@@ -358,10 +379,18 @@ public enum SearchablePDF {
 		}
 	}
 
+	private static func validateImagePageDPI(_ value: Double?) throws {
+		guard let value else { return }
+		guard value.isFinite, value >= 36, value <= 2400 else {
+			throw MessageError("--image-page-dpi must be between 36 and 2400")
+		}
+	}
+
 	private static func imagePage(
 		from source: CGImageSource,
 		label: String,
-		imageQuality: Double?
+		imageQuality: Double?,
+		imagePageDpi: Double?
 	) throws -> ImagePage {
 		guard let image = uprightImage(from: source) else {
 			throw MessageError("Cannot read image from \(label)")
@@ -376,14 +405,23 @@ public enum SearchablePDF {
 		}
 		return ImagePage(
 			image: image,
-			mediaBox: imageMediaBox(source: source, image: image),
+			mediaBox: imageMediaBox(source: source, image: image, imagePageDpi: imagePageDpi),
 			visiblePDFData: data,
 			visiblePDFDocument: document,
 			visiblePDFPage: page
 		)
 	}
 
-	private static func imageMediaBox(source: CGImageSource, image: CGImage) -> CGRect {
+	private static func imageMediaBox(source: CGImageSource, image: CGImage, imagePageDpi: Double?) -> CGRect {
+		if let imagePageDpi {
+			return CGRect(
+				x: 0,
+				y: 0,
+				width: CGFloat(image.width) / CGFloat(imagePageDpi) * 72,
+				height: CGFloat(image.height) / CGFloat(imagePageDpi) * 72
+			)
+		}
+
 		let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
 		let rawWidth = dpiValue(properties?[kCGImagePropertyDPIWidth])
 		let rawHeight = dpiValue(properties?[kCGImagePropertyDPIHeight])

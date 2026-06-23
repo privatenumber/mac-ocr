@@ -123,4 +123,10 @@ export type SearchablePdfOptions = CommonOptions & {
 	 * original full-resolution image. PDF inputs are not recompressed.
 	 */
 	imageQuality?: number;
+
+	/**
+	 * DPI to use for image input page sizing. OCR still uses the original
+	 * full-resolution image. PDF inputs are not affected.
+	 */
+	imagePageDpi?: number;
 };

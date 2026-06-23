@@ -13,12 +13,18 @@ import Testing
 		.file(fixtures.appendingPathComponent(name).path)
 	}
 
-	private func render(_ name: String, pdfDpi: Int? = nil, imageQuality: Double? = nil) async throws -> PDFDocument {
+	private func render(
+		_ name: String,
+		pdfDpi: Int? = nil,
+		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil
+	) async throws -> PDFDocument {
 		let data = try await SearchablePDF.render(
 			source: Self.source(name),
 			options: OCROptions(),
 			pdfDpi: pdfDpi,
-			imageQuality: imageQuality
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi
 		)
 		guard let document = PDFDocument(data: data) else {
 			throw MessageError("output was not a valid PDF")
@@ -107,15 +113,7 @@ import Testing
 		let directory = try InputMatrixSupport.makeTempDir("spdf-dpi")
 		defer { try? FileManager.default.removeItem(atPath: directory) }
 		let path = directory + "/hello-400dpi.jpg"
-		try InputMatrixSupport.write(
-			InputMatrixSupport.makeHelloRaster(),
-			to: path,
-			type: .jpeg,
-			properties: [
-				kCGImagePropertyDPIWidth: 400,
-				kCGImagePropertyDPIHeight: 400,
-			]
-		)
+		try writeDPIImage(to: path, dpi: 400)
 
 		let document = try await SearchablePDF.render(
 			source: .file(path),
@@ -126,6 +124,24 @@ import Testing
 		let bounds = page.bounds(for: .mediaBox)
 		#expect(abs(bounds.width - 72) < 0.1)
 		#expect(abs(bounds.height - 18) < 0.1)
+	}
+
+	@Test func imagePageDPIOverridesEmbeddedDPI() async throws {
+		let directory = try InputMatrixSupport.makeTempDir("spdf-dpi-override")
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let path = directory + "/hello-400dpi.jpg"
+		try writeDPIImage(to: path, dpi: 400)
+
+		let data = try await SearchablePDF.render(
+			source: .file(path),
+			options: OCROptions(),
+			pdfDpi: nil,
+			imagePageDpi: 200
+		)
+		let page = try #require(PDFDocument(data: data)?.page(at: 0))
+		let bounds = page.bounds(for: .mediaBox)
+		#expect(abs(bounds.width - 144) < 0.1)
+		#expect(abs(bounds.height - 36) < 0.1)
 	}
 
 	@Test func imageQualityKeepsSearchableTextAndPageSize() async throws {
@@ -193,5 +209,17 @@ import Testing
 			)!
 			return context.makeImage()!
 		}
+	}
+
+	private func writeDPIImage(to path: String, dpi: Double) throws {
+		try InputMatrixSupport.write(
+			InputMatrixSupport.makeHelloRaster(),
+			to: path,
+			type: .jpeg,
+			properties: [
+				kCGImagePropertyDPIWidth: dpi,
+				kCGImagePropertyDPIHeight: dpi,
+			]
+		)
 	}
 }
