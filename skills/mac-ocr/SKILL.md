@@ -8,7 +8,7 @@ description: Run the `mac-ocr` macOS CLI (or its Node.js API) to recognize text 
 `mac-ocr` recognizes text in images and PDFs and writes searchable PDFs, on macOS via Apple's Vision framework. Two operations:
 
 - **OCR** (the default action) — recognize text in images and PDFs.
-- **`searchable-pdf`** — write a PDF with an invisible, selectable text layer, from a PDF or an image (image → one-page PDF at its pixel dimensions).
+- **`searchable-pdf`** — write a PDF with an invisible, selectable text layer, from a PDF or an image (image → one-page PDF sized from embedded DPI, falling back to 72 DPI).
 
 ## OCR (default action — no subcommand)
 
@@ -100,7 +100,7 @@ mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout (refused o
 - **PDF inputs** keep their original pages verbatim (vector content is not re-rasterized); only an invisible text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to feed OCR.
 - **Fully born-digital PDFs pass through byte-for-byte** (annotations/links/forms/outlines preserved). When any page needs OCR, the rewrite preserves page content but **not** annotations, outlines, or metadata.
 - **`--ocr-all-pages`** overrides that skip and OCRs every page — needed for hybrid pages (a scan plus a small digital stamp/page number, which counts as "has text"); existing digital text may then appear twice in copy/search.
-- **Image inputs** become one page, sized to pixel dimensions (1px = 1pt).
+- **Image inputs** become one page, sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 - **`--image-quality <0–1>`** controls the visible image layer for image inputs only. OCR still uses the original full-resolution image; PDF inputs are not recompressed.
 - Accepts the same recognition options as OCR (`--fast`, `-l`, `-c`, `--pdf-dpi`, `--roi`, `--password`, custom words, etc.).
 - Status is **interactive-only** on stderr: a live `[page/total]` counter + `name → path` line on a terminal; piped runs are silent on success (errors only) — no quiet flag needed. stdout stays clean for `-o -`. The `ocr` command shows the same counter when results aren't streaming to the terminal.

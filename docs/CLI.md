@@ -170,7 +170,7 @@ mac-ocr searchable-pdf scan.pdf -o -                  # PDF to stdout
 ```
 
 - **PDF inputs**: each original page is preserved verbatim (vector content is not re-rasterized); only the text layer is added, and pages that already have selectable text are left untouched. The page is rasterized internally to run OCR.
-- **Image inputs**: one page, sized to pixel dimensions at 72 DPI (1px = 1pt).
+- **Image inputs**: one page, sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 - **stdin** (`-`) requires an explicit `-o` (no filename to derive a name from).
 
 For image inputs, `--image-quality <0–1>` re-encodes the visible image layer at that quality before placing the invisible text layer. OCR still runs against the original full-resolution decoded image, so this does not lower recognition quality. PDF inputs are not recompressed.

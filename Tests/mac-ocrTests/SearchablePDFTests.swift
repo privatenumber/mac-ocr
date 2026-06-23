@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 import PDFKit
 import Testing
 
@@ -94,12 +95,37 @@ import Testing
 		#expect(text(document).isEmpty)
 	}
 
-	@Test func imagePageIsSizedToPixelDimensions() async throws {
-		// Image inputs use 1px = 1pt page sizing; hello.png is 400×100.
+	@Test func imageWithoutDocumentDPIUsesPixelDimensions() async throws {
+		// The default 72 DPI fallback preserves 1px = 1pt sizing.
 		let document = try await render("hello.png")
 		let bounds = try #require(document.page(at: 0)).bounds(for: .mediaBox)
 		#expect(Int(bounds.width) == 400)
 		#expect(Int(bounds.height) == 100)
+	}
+
+	@Test func imagePageUsesEmbeddedDPI() async throws {
+		let directory = try InputMatrixSupport.makeTempDir("spdf-dpi")
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let path = directory + "/hello-400dpi.jpg"
+		try InputMatrixSupport.write(
+			InputMatrixSupport.makeHelloRaster(),
+			to: path,
+			type: .jpeg,
+			properties: [
+				kCGImagePropertyDPIWidth: 400,
+				kCGImagePropertyDPIHeight: 400,
+			]
+		)
+
+		let document = try await SearchablePDF.render(
+			source: .file(path),
+			options: OCROptions(),
+			pdfDpi: nil
+		)
+		let page = try #require(PDFDocument(data: document)?.page(at: 0))
+		let bounds = page.bounds(for: .mediaBox)
+		#expect(abs(bounds.width - 72) < 0.1)
+		#expect(abs(bounds.height - 18) < 0.1)
 	}
 
 	@Test func imageQualityKeepsSearchableTextAndPageSize() async throws {

@@ -6,9 +6,9 @@ import ImageIO
 /// Renders one image/PDF source into a searchable PDF whose pages show the
 /// original content with an invisible, selectable OCR text layer on top.
 ///
-/// - An image source becomes a single page, sized to the orientation-corrected
-///   pixel dimensions at 72 DPI (1 px = 1 pt). EXIF orientation is baked in so
-///   the page renders upright.
+/// - An image source becomes a single page, sized from embedded DPI metadata
+///   when present, falling back to 72 DPI (1 px = 1 pt). EXIF orientation is
+///   baked in so the page renders upright.
 /// - A PDF source preserves every original page verbatim — vector content is
 ///   drawn into the output PDF, not rasterized — so quality and file size are
 ///   maintained. Each page is still rasterized internally (off to the side) to
@@ -106,6 +106,7 @@ public enum SearchablePDF {
 
 	private struct ImagePage {
 		let image: CGImage
+		let mediaBox: CGRect
 		let visiblePDFData: Data
 		let visiblePDFDocument: CGPDFDocument
 		let visiblePDFPage: CGPDFPage
@@ -258,7 +259,7 @@ public enum SearchablePDF {
 		case .image(let page):
 			onProgress?(0, 1)
 			let image = page.image
-			let mediaBox = CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height))
+			let mediaBox = page.mediaBox
 			let ocr = try await recognize(image, options: options)
 			writePage(mediaBox: mediaBox, ocr: ocr, into: context) { context in
 				context.concatenate(
@@ -375,10 +376,58 @@ public enum SearchablePDF {
 		}
 		return ImagePage(
 			image: image,
+			mediaBox: imageMediaBox(source: source, image: image),
 			visiblePDFData: data,
 			visiblePDFDocument: document,
 			visiblePDFPage: page
 		)
+	}
+
+	private static func imageMediaBox(source: CGImageSource, image: CGImage) -> CGRect {
+		let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+		let rawWidth = dpiValue(properties?[kCGImagePropertyDPIWidth])
+		let rawHeight = dpiValue(properties?[kCGImagePropertyDPIHeight])
+		let swapsAxes = orientationSwapsAxes(readOrientation(from: source))
+		let dpiWidth = normalizedDPI(swapsAxes ? rawHeight : rawWidth)
+		let dpiHeight = normalizedDPI(swapsAxes ? rawWidth : rawHeight)
+
+		return CGRect(
+			x: 0,
+			y: 0,
+			width: CGFloat(image.width) / CGFloat(dpiWidth) * 72,
+			height: CGFloat(image.height) / CGFloat(dpiHeight) * 72
+		)
+	}
+
+	private static func dpiValue(_ value: Any?) -> Double? {
+		switch value {
+		case let value as Double:
+			return value
+		case let value as Float:
+			return Double(value)
+		case let value as Int:
+			return Double(value)
+		case let value as NSNumber:
+			return value.doubleValue
+		default:
+			return nil
+		}
+	}
+
+	private static func normalizedDPI(_ value: Double?) -> Double {
+		guard let value, value.isFinite, value >= 36, value <= 2400 else {
+			return 72
+		}
+		return value
+	}
+
+	private static func orientationSwapsAxes(_ orientation: CGImagePropertyOrientation) -> Bool {
+		switch orientation {
+		case .left, .leftMirrored, .right, .rightMirrored:
+			return true
+		default:
+			return false
+		}
 	}
 
 	private static func makeVisibleImagePDF(image: CGImage, imageQuality: Double?) throws -> Data {

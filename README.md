@@ -87,6 +87,8 @@ mac-ocr searchable-pdf scan.pdf -o - > scan.pdf      # stdout
 
 A fixed path or `-` (stdout) takes a single input; for multiple inputs use a directory or a `[name]` template.
 
+Image inputs are sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
+
 Pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 
 In an interactive terminal you get a live `[page/total]` progress counter. Piped or redirected runs are silent on success, so scripts stay clean.
