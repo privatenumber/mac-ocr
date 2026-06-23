@@ -125,7 +125,6 @@ import Testing
 		#expect(abs(bounds.width - 72) < 0.1)
 		#expect(abs(bounds.height - 18) < 0.1)
 	}
-
 	@Test func imagePageDPIOverridesEmbeddedDPI() async throws {
 		let directory = try InputMatrixSupport.makeTempDir("spdf-dpi-override")
 		defer { try? FileManager.default.removeItem(atPath: directory) }
