@@ -1,0 +1,49 @@
+{
+  "name": "mac-ocr",
+  "version": "0.0.0-semantic-release",
+  "description": "macOS CLI for OCR and searchable PDFs using Apple's Vision framework. Recognize text in images and PDFs, stream PDF pages, and add an invisible selectable text layer over scanned pages.",
+  "keywords": [
+    "mac",
+    "macos",
+    "ocr",
+    "text-recognition",
+    "apple-vision",
+    "vision",
+    "pdf",
+    "searchable-pdf",
+    "ocr-pdf",
+    "scanned-pdf",
+    "cli",
+    "native",
+    "swift"
+  ],
+  "license": "MIT",
+  "repository": "privatenumber/mac-ocr",
+  "homepage": "https://github.com/privatenumber/mac-ocr#readme",
+  "bugs": "https://github.com/privatenumber/mac-ocr/issues",
+  "author": {
+    "name": "Hiroki Osame",
+    "email": "hiroki.osame@gmail.com"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "docs",
+    "skills"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "mac-ocr": "bin/mac-ocr"
+  },
+  "exports": {
+    "types": "./dist/index.d.mts",
+    "default": "./dist/index.mjs"
+  },
+  "os": [
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}
