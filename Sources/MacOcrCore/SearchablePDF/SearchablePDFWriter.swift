@@ -1274,6 +1274,15 @@ public enum SearchablePDF {
 			observations.append(observation)
 			return
 		}
+		let existingText = observations[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
+		let newText = observation.text.trimmingCharacters(in: .whitespacesAndNewlines)
+		if existingText.contains(newText), existingText.count > newText.count {
+			return
+		}
+		if newText.contains(existingText), newText.count > existingText.count {
+			observations[index] = observation
+			return
+		}
 		if score(observation) > score(observations[index]) {
 			observations[index] = observation
 		}
