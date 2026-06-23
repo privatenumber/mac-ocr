@@ -122,12 +122,12 @@ public enum SearchablePDF {
 			throw MessageError("No input sources were provided")
 		}
 
-		var pageCounts: [Int] = []
-		pageCounts.reserveCapacity(sources.count)
+		var plans: [MergeSourcePlan] = []
+		plans.reserveCapacity(sources.count)
 		for source in sources {
-			pageCounts.append(try await pageCount(for: source, password: password))
+			plans.append(try await mergeSourcePlan(for: source, password: password))
 		}
-		let totalPages = pageCounts.reduce(0, +)
+		let totalPages = plans.reduce(0) { $0 + $1.pageCount }
 
 		let pdfData = NSMutableData()
 		guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
@@ -138,9 +138,9 @@ public enum SearchablePDF {
 
 		onProgress?(0, totalPages)
 		var completedBeforeSource = 0
-		for source in sources {
+		for plan in plans {
 			let producer = try await resolveProducer(
-				source,
+				plan: plan,
 				password: password,
 				imageQuality: imageQuality,
 				imagePageDpi: imagePageDpi,
@@ -148,7 +148,7 @@ public enum SearchablePDF {
 			)
 			let pagesWritten = try await appendSource(
 				producer,
-				displayName: source.displayName,
+				displayName: plan.source.displayName,
 				options: options,
 				pdfDpi: pdfDpi,
 				ocrAllPages: ocrAllPages,
@@ -192,6 +192,12 @@ public enum SearchablePDF {
 		let visiblePDFPage: CGPDFPage
 	}
 
+	private struct MergeSourcePlan {
+		let source: ImageSource
+		let pageCount: Int
+		let data: Data?
+	}
+
 	/// Per-page geometry and OCR decision, computed serially up front on the
 	/// main document so the page-ordered output loop never touches the document
 	/// concurrently with a background render.
@@ -211,14 +217,16 @@ public enum SearchablePDF {
 		let value: T
 	}
 
-	private static func pageCount(for source: ImageSource, password: String?) async throws -> Int {
+	private static func mergeSourcePlan(for source: ImageSource, password: String?) async throws -> MergeSourcePlan {
 		switch source {
 		case .file(let path):
 			let url = URL(fileURLWithPath: path)
 			guard FileManager.default.fileExists(atPath: url.path) else {
 				throw MessageError("No such file: \(path)")
 			}
-			guard isPDFFile(url: url) else { return 1 }
+			guard isPDFFile(url: url) else {
+				return MergeSourcePlan(source: source, pageCount: 1, data: nil)
+			}
 			guard let document = CGPDFDocument(url as CFURL) else {
 				throw MessageError("Cannot read PDF: \(path)")
 			}
@@ -227,14 +235,16 @@ public enum SearchablePDF {
 			guard pageCount > 0 else {
 				throw MessageError("PDF has no pages: \(path)")
 			}
-			return pageCount
+			return MergeSourcePlan(source: source, pageCount: pageCount, data: nil)
 
 		case .url(let urlString):
 			guard let remoteURL = URL(string: urlString) else {
 				throw MessageError("Invalid URL: \(urlString)")
 			}
 			let data = try await fetchRemoteData(from: remoteURL, label: urlString)
-			guard isPDFData(data) else { return 1 }
+			guard isPDFData(data) else {
+				return MergeSourcePlan(source: source, pageCount: 1, data: data)
+			}
 			guard let provider = CGDataProvider(data: data as CFData),
 				let document = CGPDFDocument(provider)
 			else {
@@ -245,11 +255,37 @@ public enum SearchablePDF {
 			guard pageCount > 0 else {
 				throw MessageError("PDF has no pages: \(urlString)")
 			}
-			return pageCount
+			return MergeSourcePlan(source: source, pageCount: pageCount, data: data)
 
 		case .stdin:
 			throw MessageError("--merge does not support stdin input")
 		}
+	}
+
+	private static func resolveProducer(
+		plan: MergeSourcePlan,
+		password: String?,
+		imageQuality: Double?,
+		imagePageDpi: Double?,
+		imageDownsampleDpi: Double?
+	) async throws -> PageProducer {
+		if let data = plan.data {
+			return try producer(
+				fromData: data,
+				label: plan.source.displayName,
+				password: password,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
+			)
+		}
+		return try await resolveProducer(
+			plan.source,
+			password: password,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi
+		)
 	}
 
 	// TODO: The rewrite below drops annotations (links, form fields),
