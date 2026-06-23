@@ -86,7 +86,7 @@ public enum SearchablePDF {
 			if allPagesHaveText, let original = originalData() {
 				if let debugOptions {
 					let debugWriter = try DebugWriter(options: debugOptions)
-					defer { debugWriter.close() }
+					defer { try? debugWriter.close() }
 					try writeSkippedPDFDebugRecords(
 						document: document,
 						source: source,
@@ -110,7 +110,7 @@ public enum SearchablePDF {
 		}
 
 		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
-		defer { debugWriter?.close() }
+		defer { try? debugWriter?.close() }
 
 		let pagesWritten = try await appendSource(
 			producer, displayName: source.displayName, options: options, pdfDpi: pdfDpi,
@@ -159,7 +159,7 @@ public enum SearchablePDF {
 		}
 
 		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
-		defer { debugWriter?.close() }
+		defer { try? debugWriter?.close() }
 
 		let completedPages = try await appendMergedSources(
 			sources: sources,
@@ -203,7 +203,7 @@ public enum SearchablePDF {
 		}
 
 		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
-		defer { debugWriter?.close() }
+		defer { try? debugWriter?.close() }
 
 		let completedPages = try await appendMergedSources(
 			sources: sources,
@@ -343,11 +343,19 @@ public enum SearchablePDF {
 
 		func write(_ record: DebugPageRecord) throws {
 			let line = try encodeJSONLine(record) + "\n"
-			handle.write(Data(line.utf8))
+			if #available(macOS 10.15.4, *) {
+				try handle.write(contentsOf: Data(line.utf8))
+			} else {
+				handle.write(Data(line.utf8))
+			}
 		}
 
-		func close() {
-			handle.closeFile()
+		func close() throws {
+			if #available(macOS 10.15.4, *) {
+				try handle.close()
+			} else {
+				handle.closeFile()
+			}
 		}
 	}
 
