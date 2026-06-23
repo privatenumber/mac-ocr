@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import Foundation
 import MacOcrCore
 
@@ -173,19 +174,18 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	) async throws {
 		let outputPath = output == "-" ? nil : try resolvedMergeOutputPath()
 		let reporter = ProgressReporter(name: output == "-" ? "merged searchable PDF" : output ?? "merged searchable PDF")
-		let data = try await SearchablePDF.renderMerged(
-			sources: sources,
-			options: options,
-			pdfDpi: pdfDpi,
-			password: pdfPassword,
-			ocrAllPages: ocrAllPages,
-			imageQuality: imageQuality,
-			imagePageDpi: imagePageDpi,
-			imageDownsampleDpi: imageDownsampleDpi,
-			onProgress: { reporter.update(done: $0, total: $1) }
-		)
-
 		if output == "-" {
+			let data = try await SearchablePDF.renderMerged(
+				sources: sources,
+				options: options,
+				pdfDpi: pdfDpi,
+				password: pdfPassword,
+				ocrAllPages: ocrAllPages,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi,
+				onProgress: { reporter.update(done: $0, total: $1) }
+			)
 			FileHandle.standardOutput.write(data)
 			reporter.finish(outputPath: nil)
 			return
@@ -195,8 +195,31 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			preconditionFailure("merge output path is resolved before rendering")
 		}
 		try ensureParentDirectory(forFile: path)
-		try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+		let outputURL = URL(fileURLWithPath: path)
+		let tempURL = outputURL.deletingLastPathComponent().appendingPathComponent(
+			".\(outputURL.lastPathComponent).\(UUID().uuidString).tmp"
+		)
+		defer { try? FileManager.default.removeItem(at: tempURL) }
+		try await SearchablePDF.writeMerged(
+			sources: sources,
+			to: tempURL,
+			options: options,
+			pdfDpi: pdfDpi,
+			password: pdfPassword,
+			ocrAllPages: ocrAllPages,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi,
+			onProgress: { reporter.update(done: $0, total: $1) }
+		)
+		try replaceFile(at: outputURL, with: tempURL)
 		reporter.finish(outputPath: path)
+	}
+
+	private func replaceFile(at outputURL: URL, with tempURL: URL) throws {
+		guard rename(tempURL.path, outputURL.path) == 0 else {
+			throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+		}
 	}
 
 	/// The per-input output mode. The default and directory forms resolve to a

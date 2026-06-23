@@ -115,6 +115,84 @@ public enum SearchablePDF {
 		imageDownsampleDpi: Double? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
+		let pdfData = NSMutableData()
+		guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
+			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
+		else {
+			throw MessageError("Could not create PDF output context")
+		}
+
+		let completedPages = try await appendMergedSources(
+			sources: sources,
+			options: options,
+			pdfDpi: pdfDpi,
+			password: password,
+			ocrAllPages: ocrAllPages,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi,
+			into: context,
+			onProgress: onProgress
+		)
+
+		guard completedPages > 0 else {
+			throw MessageError("No pages were produced")
+		}
+
+		context.closePDF()
+		return pdfData as Data
+	}
+
+	public static func writeMerged(
+		sources: [ImageSource],
+		to outputURL: URL,
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String? = nil,
+		ocrAllPages: Bool = false,
+		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil,
+		imageDownsampleDpi: Double? = nil,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws {
+		guard let consumer = CGDataConsumer(url: outputURL as CFURL),
+			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
+		else {
+			throw MessageError("Could not create PDF output context")
+		}
+
+		let completedPages = try await appendMergedSources(
+			sources: sources,
+			options: options,
+			pdfDpi: pdfDpi,
+			password: password,
+			ocrAllPages: ocrAllPages,
+			imageQuality: imageQuality,
+			imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi,
+			into: context,
+			onProgress: onProgress
+		)
+
+		guard completedPages > 0 else {
+			throw MessageError("No pages were produced")
+		}
+
+		context.closePDF()
+	}
+
+	private static func appendMergedSources(
+		sources: [ImageSource],
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String?,
+		ocrAllPages: Bool,
+		imageQuality: Double?,
+		imagePageDpi: Double?,
+		imageDownsampleDpi: Double?,
+		into context: CGContext,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws -> Int {
 		try validateImageQuality(imageQuality)
 		try validateImageDPI(imagePageDpi, name: "--image-page-dpi")
 		try validateImageDPI(imageDownsampleDpi, name: "--image-downsample-dpi")
@@ -128,13 +206,6 @@ public enum SearchablePDF {
 			plans.append(try await mergeSourcePlan(for: source, password: password))
 		}
 		let totalPages = plans.reduce(0) { $0 + $1.pageCount }
-
-		let pdfData = NSMutableData()
-		guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
-			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
-		else {
-			throw MessageError("Could not create PDF output context")
-		}
 
 		onProgress?(0, totalPages)
 		var completedBeforeSource = 0
@@ -161,13 +232,7 @@ public enum SearchablePDF {
 			)
 			completedBeforeSource += pagesWritten
 		}
-
-		guard completedBeforeSource > 0 else {
-			throw MessageError("No pages were produced")
-		}
-
-		context.closePDF()
-		return pdfData as Data
+		return completedBeforeSource
 	}
 
 	// MARK: - Source resolution
