@@ -190,7 +190,7 @@ import Testing
 		let directory = try InputMatrixSupport.makeTempDir("spdf-downsample")
 		defer { try? FileManager.default.removeItem(atPath: directory) }
 		let path = directory + "/noisy-400dpi.jpg"
-		try writeDPIImage(makeNoisyImage(width: 800, height: 600), to: path, dpi: 400)
+		try writeDPIImage(makeNoisyImage(width: 800, height: 600), to: path, dpiWidth: 400, dpiHeight: 400)
 
 		let full = try await SearchablePDF.render(
 			source: .file(path),
@@ -207,6 +207,36 @@ import Testing
 		)
 
 		#expect(downsampled.count < full.count)
+		let fullBounds = try #require(PDFDocument(data: full)?.page(at: 0)).bounds(for: .mediaBox)
+		let downsampledBounds = try #require(PDFDocument(data: downsampled)?.page(at: 0)).bounds(for: .mediaBox)
+		#expect(abs(fullBounds.width - downsampledBounds.width) < 0.1)
+		#expect(abs(fullBounds.height - downsampledBounds.height) < 0.1)
+	}
+
+	@Test func imageDownsampleDPIHandlesDifferentHorizontalAndVerticalDPI() async throws {
+		let directory = try InputMatrixSupport.makeTempDir("spdf-downsample-axis")
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let path = directory + "/noisy-72x600dpi.jpg"
+		try writeDPIImage(makeNoisyImage(width: 600, height: 800), to: path, dpiWidth: 72, dpiHeight: 600)
+
+		let full = try await SearchablePDF.render(
+			source: .file(path),
+			options: OCROptions(),
+			pdfDpi: nil,
+			imageQuality: 0.85
+		)
+		let downsampled = try await SearchablePDF.render(
+			source: .file(path),
+			options: OCROptions(),
+			pdfDpi: nil,
+			imageQuality: 0.85,
+			imageDownsampleDpi: 150
+		)
+
+		#expect(
+			downsampled.count < full.count,
+			"vertical-only downsampling should reduce output size when only the Y axis exceeds the target DPI"
+		)
 		let fullBounds = try #require(PDFDocument(data: full)?.page(at: 0)).bounds(for: .mediaBox)
 		let downsampledBounds = try #require(PDFDocument(data: downsampled)?.page(at: 0)).bounds(for: .mediaBox)
 		#expect(abs(fullBounds.width - downsampledBounds.width) < 0.1)
@@ -241,13 +271,17 @@ import Testing
 	}
 
 	private func writeDPIImage(_ image: CGImage, to path: String, dpi: Double) throws {
+		try writeDPIImage(image, to: path, dpiWidth: dpi, dpiHeight: dpi)
+	}
+
+	private func writeDPIImage(_ image: CGImage, to path: String, dpiWidth: Double, dpiHeight: Double) throws {
 		try InputMatrixSupport.write(
 			image,
 			to: path,
 			type: .jpeg,
 			properties: [
-				kCGImagePropertyDPIWidth: dpi,
-				kCGImagePropertyDPIHeight: dpi,
+				kCGImagePropertyDPIWidth: dpiWidth,
+				kCGImagePropertyDPIHeight: dpiHeight,
 			]
 		)
 	}

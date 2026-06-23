@@ -419,8 +419,7 @@ public enum SearchablePDF {
 		}
 		let mediaBox = imageMediaBox(source: source, image: image, imagePageDpi: imagePageDpi)
 		let downsampled = downsampleVisibleImage(
-			from: source,
-			fallback: image,
+			image,
 			mediaBox: mediaBox,
 			imageDownsampleDpi: imageDownsampleDpi
 		)
@@ -498,26 +497,43 @@ public enum SearchablePDF {
 	}
 
 	private static func downsampleVisibleImage(
-		from source: CGImageSource,
-		fallback image: CGImage,
+		_ image: CGImage,
 		mediaBox: CGRect,
 		imageDownsampleDpi: Double?
 	) -> CGImage {
 		guard let imageDownsampleDpi else { return image }
-		let targetWidth = Int((mediaBox.width / 72 * CGFloat(imageDownsampleDpi)).rounded(.up))
-		let targetHeight = Int((mediaBox.height / 72 * CGFloat(imageDownsampleDpi)).rounded(.up))
-		let targetMaxDimension = max(targetWidth, targetHeight)
-		let sourceMaxDimension = max(image.width, image.height)
-		guard targetMaxDimension > 0, targetMaxDimension < sourceMaxDimension else {
+		let targetWidth = min(
+			image.width,
+			Int((mediaBox.width / 72 * CGFloat(imageDownsampleDpi)).rounded(.up))
+		)
+		let targetHeight = min(
+			image.height,
+			Int((mediaBox.height / 72 * CGFloat(imageDownsampleDpi)).rounded(.up))
+		)
+		guard targetWidth > 0, targetHeight > 0,
+			targetWidth < image.width || targetHeight < image.height
+		else {
 			return image
 		}
 
-		let options: [CFString: Any] = [
-			kCGImageSourceCreateThumbnailWithTransform: true,
-			kCGImageSourceCreateThumbnailFromImageAlways: true,
-			kCGImageSourceThumbnailMaxPixelSize: targetMaxDimension,
-		]
-		return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) ?? image
+		guard
+			let context = CGContext(
+				data: nil,
+				width: targetWidth,
+				height: targetHeight,
+				bitsPerComponent: 8,
+				bytesPerRow: 0,
+				space: CGColorSpaceCreateDeviceRGB(),
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			return image
+		}
+		let rect = CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
+		context.interpolationQuality = .high
+		context.clear(rect)
+		context.draw(image, in: rect)
+		return context.makeImage() ?? image
 	}
 
 	private static func makeVisibleImagePDF(image: CGImage, imageQuality: Double?) throws -> Data {
