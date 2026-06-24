@@ -1,7 +1,7 @@
 {
-	"name": "mac-ocr",
+	"name": "mac-ai",
 	"version": "0.0.0-semantic-release",
-	"description": "macOS CLI for OCR and searchable PDFs using Apple's Vision framework. Recognize text in images and PDFs, stream PDF pages, and add an invisible selectable text layer over scanned pages.",
+	"description": "macOS CLI for on-device OCR, searchable PDFs, and AI file naming using Apple's Vision and FoundationModels frameworks. Recognize text in images and PDFs, add an invisible selectable text layer to scans, and generate descriptive file names — all on-device, no network.",
 	"keywords": [
 		"mac",
 		"macos",
@@ -9,6 +9,9 @@
 		"text-recognition",
 		"apple-vision",
 		"vision",
+		"apple-intelligence",
+		"foundation-models",
+		"on-device-ai",
 		"pdf",
 		"searchable-pdf",
 		"ocr-pdf",
@@ -18,9 +21,9 @@
 		"swift"
 	],
 	"license": "MIT",
-	"repository": "privatenumber/mac-ocr",
-	"homepage": "https://github.com/privatenumber/mac-ocr#readme",
-	"bugs": "https://github.com/privatenumber/mac-ocr/issues",
+	"repository": "guocity/mac-ai-model",
+	"homepage": "https://github.com/guocity/mac-ai-model#readme",
+	"bugs": "https://github.com/guocity/mac-ai-model/issues",
 	"author": {
 		"name": "Hiroki Osame",
 		"email": "hiroki.osame@gmail.com"
@@ -34,7 +37,9 @@
 	"type": "module",
 	"sideEffects": false,
 	"bin": {
-		"mac-ocr": "bin/mac-ocr"
+		"mac-ocr": "bin/mac-ocr",
+		"name-file": "bin/name-file",
+		"extract-metadata": "bin/extract-metadata"
 	},
 	"exports": {
 		"types": "./dist/index.d.mts",
@@ -42,11 +47,11 @@
 	},
 	"packageManager": "pnpm@10.20.0",
 	"scripts": {
-		"build": "node scripts/write-version.mjs && swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize -Xlinker -dead_strip && mkdir -p bin && cp .build/apple/Products/Release/mac-ocr bin/mac-ocr && strip -rSTx bin/mac-ocr && pkgroll",
+		"build": "node scripts/write-version.mjs && swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize -Xlinker -dead_strip && mkdir -p bin && cp .build/apple/Products/Release/mac-ocr bin/mac-ocr && cp .build/apple/Products/Release/name-file bin/name-file && cp .build/apple/Products/Release/extract-metadata bin/extract-metadata && strip -rSTx bin/mac-ocr bin/name-file bin/extract-metadata && pkgroll",
 		"typecheck": "tsc",
 		"lint": "lintroll --git . && swift format lint --strict --recursive --parallel Sources Tests",
 		"test": "swift test --no-parallel",
-		"test:node": "swift build && mkdir -p bin && cp .build/debug/mac-ocr bin/mac-ocr && node Tests/index.ts",
+		"test:node": "swift build && mkdir -p bin && cp .build/debug/mac-ocr bin/mac-ocr && cp .build/debug/name-file bin/name-file && cp .build/debug/extract-metadata bin/extract-metadata && node Tests/index.ts",
 		"prepare": "skills-npm",
 		"prepack": "pnpm build && clean-pkg-json"
 	},

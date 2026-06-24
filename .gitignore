@@ -25,3 +25,5 @@ xcuserdata/
 
 # searchable-pdf default output, e.g. from ad-hoc runs against fixtures
 Tests/fixtures/*.ocr.pdf
+
+pdf

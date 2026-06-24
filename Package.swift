@@ -30,6 +30,20 @@ let package = Package(
 			],
 			path: "Sources/mac-ocr"
 		),
+		.target(
+			name: "MacAIKit",
+			path: "Sources/MacAIKit"
+		),
+		.executableTarget(
+			name: "name-file",
+			dependencies: ["MacAIKit"],
+			path: "Sources/name-file"
+		),
+		.executableTarget(
+			name: "extract-metadata",
+			dependencies: ["MacAIKit"],
+			path: "Sources/extract-metadata"
+		),
 		.testTarget(
 			name: "mac-ocrTests",
 			dependencies: [

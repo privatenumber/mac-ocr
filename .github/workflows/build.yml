@@ -1,0 +1,63 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+jobs:
+  build:
+    name: Build universal binaries
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      # macOS 26 SDK — required for the FoundationModels framework that
+      # name-file links against. Earlier Xcodes don't ship it.
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Build
+        # pnpm build does the universal (arm64 + x86_64) release build and
+        # writes bin/mac-ocr and bin/name-file. The universal build needs
+        # Xcode's build system, which is why this runs on a GitHub runner.
+        run: pnpm build
+
+      - name: Verify binaries
+        run: |
+          # mac-ocr can report its version without any runtime dependencies.
+          bin/mac-ocr --version
+          # name-file and extract-metadata need the on-device model at runtime,
+          # which CI runners don't have — so we only assert they built as
+          # universal executables.
+          test -x bin/name-file
+          test -x bin/extract-metadata
+          lipo -info bin/mac-ocr bin/name-file bin/extract-metadata
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-ai-bin
+          path: bin/
+          if-no-files-found: error
