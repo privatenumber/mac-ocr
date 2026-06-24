@@ -163,20 +163,40 @@ import Testing
 		#expect(FileManager.default.fileExists(atPath: output))
 		let records = try jsonlObjects(at: debug)
 		#expect(records.count == 2)
-		#expect(records[0]["outputPage"] as? Int == 1)
-		#expect(records[1]["outputPage"] as? Int == 2)
-		#expect(records[0]["outputPageCount"] as? Int == 2)
 		#expect(records[0]["schema"] as? String == "mac-ocr.searchable-pdf.debug")
+		#expect(records[0]["schemaVersion"] as? Int == 3)
+		let firstOutput = try #require(records[0]["output"] as? [String: Any])
+		let secondOutput = try #require(records[1]["output"] as? [String: Any])
+		#expect(firstOutput["page"] as? Int == 1)
+		#expect(secondOutput["page"] as? Int == 2)
+		#expect(firstOutput["pageCount"] as? Int == 2)
 		let firstSource = try #require(records[0]["source"] as? [String: Any])
 		let secondSource = try #require(records[1]["source"] as? [String: Any])
-		#expect((firstSource["path"] as? String)?.hasSuffix("hello.png") == true)
-		#expect((secondSource["path"] as? String)?.hasSuffix("document-photo.png") == true)
+		let firstInput = try #require(firstSource["input"] as? [String: Any])
+		let secondInput = try #require(secondSource["input"] as? [String: Any])
+		#expect((firstInput["path"] as? String)?.hasSuffix("hello.png") == true)
+		#expect((secondInput["path"] as? String)?.hasSuffix("document-photo.png") == true)
 		let firstOcr = try #require(records[0]["ocr"] as? [String: Any])
 		let observations = try #require(firstOcr["observations"] as? [[String: Any]])
 		#expect(!observations.isEmpty)
-		#expect(observations.first?["sourcePass"] as? String == "full")
-		let words = observations.first?["words"] as? [[String: Any]]
+		let firstObservation = try #require(observations.first)
+		#expect(firstObservation["status"] as? String == "accepted")
+		#expect(firstObservation["pdfBox"] as? [String: Any] != nil)
+		let origin = try #require(firstObservation["origin"] as? [String: Any])
+		#expect(origin["passId"] as? String == "full")
+		let words = firstObservation["words"] as? [[String: Any]]
 		#expect(words?.isEmpty == false)
+		let recognition = try #require(records[0]["recognition"] as? [String: Any])
+		#expect(recognition["strategy"] as? String == "auto")
+		let passes = try #require(recognition["passes"] as? [String: Any])
+		let fullPass = try #require(passes["full"] as? [String: Any])
+		let partitionedPass = try #require(passes["partitioned"] as? [String: Any])
+		#expect(fullPass["type"] as? String == "full-page")
+		#expect(fullPass["enabled"] as? Bool == true)
+		#expect(partitionedPass["type"] as? String == "partitioned")
+		#expect(partitionedPass["enabled"] as? Bool == false)
+		#expect(partitionedPass["metrics"] as? [String: Any] != nil)
+		#expect(partitionedPass["thresholds"] as? [String: Any] != nil)
 	}
 
 	@Test func debugPerInputBatchWritesOneSidecarPerOutputPDF() throws {
@@ -193,6 +213,46 @@ import Testing
 		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
 		#expect(try jsonlObjects(at: directory + "/hello.ocr.jsonl").count == 1)
 		#expect(try jsonlObjects(at: directory + "/document-photo.ocr.jsonl").count == 1)
+	}
+
+	@Test func debugPartitionedRecordsRejectedObservationsWithReasons() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = TestSupport.fixturePath("document-photo.png")
+		let output = directory + "/partitioned.pdf"
+		let debug = directory + "/partitioned.jsonl"
+
+		let result = try TestSupport.run(
+			["searchable-pdf", "--ocr-strategy", "partitioned", "-o", output, input],
+			environment: ["MAC_OCR_DEBUG": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		let record = try #require(try jsonlObjects(at: debug).first)
+		let recognition = try #require(record["recognition"] as? [String: Any])
+		#expect(recognition["effectiveStrategy"] as? String == "partitioned")
+		let passes = try #require(recognition["passes"] as? [String: Any])
+		let partitioned = try #require(passes["partitioned"] as? [String: Any])
+		#expect(partitioned["enabled"] as? Bool == true)
+		let partitions = try #require(partitioned["partitions"] as? [[String: Any]])
+		#expect(partitions.contains { ($0["rejected"] as? Int ?? 0) > 0 })
+
+		let ocr = try #require(record["ocr"] as? [String: Any])
+		let observations = try #require(ocr["observations"] as? [[String: Any]])
+		let rejectedObservations = observations.filter { $0["status"] as? String == "rejected" }
+		#expect(!rejectedObservations.isEmpty)
+		let rejected = try #require(
+			rejectedObservations.first { observation in
+				let origin = observation["origin"] as? [String: Any]
+				return origin?["passId"] as? String == "partition"
+			}
+		)
+		#expect(rejected["pdfBox"] == nil)
+		let origin = try #require(rejected["origin"] as? [String: Any])
+		#expect(origin["passId"] as? String == "partition")
+		#expect(origin["partitionId"] as? String != nil)
+		let rejection = try #require(rejected["rejection"] as? [String: Any])
+		#expect(rejection["reason"] as? String != nil)
 	}
 
 	@Test func debugRejectsStdoutPDFOutput() throws {
@@ -235,10 +295,16 @@ import Testing
 		let records = try jsonlObjects(at: debug)
 		#expect(records.count == 1)
 		for record in records {
+			let recognition = try #require(record["recognition"] as? [String: Any])
+			#expect(recognition["skipped"] as? Bool == true)
+			#expect(recognition["skipReason"] as? String == "existing-text-layer")
+			let passes = try #require(recognition["passes"] as? [String: Any])
+			#expect(passes.isEmpty)
 			let ocr = try #require(record["ocr"] as? [String: Any])
-			#expect(ocr["skipped"] as? Bool == true)
-			#expect(ocr["skipReason"] as? String == "existing-text-layer")
-			let pdfPage = try #require(record["pdfPage"] as? [String: Any])
+			let observations = try #require(ocr["observations"] as? [[String: Any]])
+			#expect(observations.isEmpty)
+			let geometry = try #require(record["geometry"] as? [String: Any])
+			let pdfPage = try #require(geometry["pdfPage"] as? [String: Any])
 			let mediaBox = try #require(pdfPage["mediaBox"] as? [String: Any])
 			#expect(pdfPage["rotation"] as? Int == 90)
 			#expect(mediaBox["x"] as? Double == 10)
