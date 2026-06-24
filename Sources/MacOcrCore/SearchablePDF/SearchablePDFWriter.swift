@@ -1593,18 +1593,18 @@ public enum SearchablePDF {
 	}
 
 	// Vision does not publish its text recognizer's internal working resolution.
-	// A representative lease scan plateaued once regions landed in the
-	// low-single-digit megapixel range; below this, splitting adds cost without
-	// reliably adding glyph pixels for Vision to read.
-	private static let minPartitionMegapixels = 4.0
-	private static let minPartitionMaxDimension = 2000
+	// A representative lease scan preserved useful recall once child regions
+	// landed in the low-single-digit megapixel range; split parents only while
+	// they are large enough for their children to stay near that range.
+	private static let minPartitionMegapixels = 8.0
+	private static let minPartitionMaxDimension = 2800
 	private static let autoMinMegapixels = 8.0
 	private static let autoMinMaxDimension = 2500
 	private static let smallTextP25Threshold = 0.015
 	private static let smallTextMedianThreshold = 0.02
 	private static let minPartitionTextLength = 2
 	private static let minPartitionConfidence: Float = 0.3
-	private static let partitionWarningEstimatedPasses = 64
+	private static let partitionWarningEstimatedPasses = 32
 
 	private static func crop(_ image: CGImage, to partition: BoundingBox) -> CGImage? {
 		let rect = CGRect(
