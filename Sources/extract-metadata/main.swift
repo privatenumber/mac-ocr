@@ -26,13 +26,13 @@ import MacAIKit
 // boolean, array, object.
 
 let instructions = """
-You extract structured metadata from a scanned document's text. Fill every field \
-of the provided schema using only information present in the document. Spell words \
-correctly and fix obvious scan errors — for example a digit "0" used inside a word \
-that should be the letter "o", or "1" that should be "l" — but copy numbers, codes, \
-and reference numbers exactly. If a value is not present, use an empty string, or 0 \
-for numbers and false for booleans.
-"""
+	You extract structured metadata from a scanned document's text. Fill every field \
+	of the provided schema using only information present in the document. Spell words \
+	correctly and fix obvious scan errors — for example a digit "0" used inside a word \
+	that should be the letter "o", or "1" that should be "l" — but copy numbers, codes, \
+	and reference numbers exactly. If a value is not present, use an empty string, or 0 \
+	for numbers and false for booleans.
+	"""
 
 func fail(_ message: String) -> Never {
 	FileHandle.standardError.write(Data(("extract-metadata: " + message + "\n").utf8))
@@ -57,7 +57,8 @@ func buildSchema(_ spec: Any, name: String) throws -> DynamicGenerationSchema {
 	guard let dict = spec as? [String: Any] else {
 		throw SchemaError("field '\(name)': spec must be a type string or an object")
 	}
-	let type = (dict["type"] as? String)
+	let type =
+		(dict["type"] as? String)
 		?? (dict["properties"] != nil ? "object" : (dict["items"] != nil ? "array" : "string"))
 
 	switch type {
@@ -160,8 +161,10 @@ func extract(from text: String, schema: GenerationSchema) async -> String {
 		).content
 		let raw = content.jsonString
 		if ProcessInfo.processInfo.environment["EXTRACT_RAW"] != nil { return raw }
-		guard let data = raw.data(using: .utf8),
-			let parsed = try? JSONSerialization.jsonObject(with: data) else {
+		guard
+			let data = raw.data(using: .utf8),
+			let parsed = try? JSONSerialization.jsonObject(with: data)
+		else {
 			return raw
 		}
 		return encodeJSON(parsed)
@@ -195,16 +198,18 @@ func run() async {
 		case "--batch":
 			batch = true
 		case "-h", "--help":
-			print("""
-			Usage:
-			  extract-metadata --schema <file>           one doc on stdin -> JSON on stdout
-			  extract-metadata --schema <file> FILE...   "<file>\\t<json>" per line
-			  extract-metadata --schema <file> --batch   NUL-separated docs -> JSONL
-			  extract-metadata --schema-json '<json>'    pass the schema inline
+			print(
+				"""
+				Usage:
+				  extract-metadata --schema <file>           one doc on stdin -> JSON on stdout
+				  extract-metadata --schema <file> FILE...   "<file>\\t<json>" per line
+				  extract-metadata --schema <file> --batch   NUL-separated docs -> JSONL
+				  extract-metadata --schema-json '<json>'    pass the schema inline
 
-			Schema is a JSON object of field -> { "type": …, "description": …, "optional": … }.
-			Types: string, integer, number, boolean, array (with "items"), object (with "properties").
-			""")
+				Schema is a JSON object of field -> { "type": …, "description": …, "optional": … }.
+				Types: string, integer, number, boolean, array (with "items"), object (with "properties").
+				"""
+			)
 			exit(0)
 		default:
 			paths.append(arg)
@@ -225,8 +230,10 @@ func run() async {
 		fail("a schema is required (use --schema <file> or --schema-json '<json>')")
 	}
 
-	guard let schemaData = schemaText.data(using: .utf8),
-		let topLevel = try? JSONSerialization.jsonObject(with: schemaData) else {
+	guard
+		let schemaData = schemaText.data(using: .utf8),
+		let topLevel = try? JSONSerialization.jsonObject(with: schemaData)
+	else {
 		fail("schema is not valid JSON")
 	}
 

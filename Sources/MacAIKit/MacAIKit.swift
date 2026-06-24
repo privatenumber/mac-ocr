@@ -56,7 +56,8 @@ public func mapConcurrent<T: Sendable>(
 		while let (idx, value) = await group.next() {
 			results[idx] = value
 			if next < items.count {
-				let i = next, item = items[i]
+				let i = next
+				let item = items[i]
 				group.addTask { (i, await op(item)) }
 				next += 1
 			}
