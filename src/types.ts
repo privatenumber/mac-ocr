@@ -135,4 +135,7 @@ export type SearchablePdfOptions = CommonOptions & {
 	 * are not affected. PDF inputs are not downsampled.
 	 */
 	imageDownsampleDpi?: number;
+
+	/** OCR strategy for searchable PDFs. Default `'auto'`. */
+	ocrStrategy?: 'auto' | 'standard' | 'partitioned';
 };

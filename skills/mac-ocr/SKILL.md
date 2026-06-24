@@ -107,7 +107,7 @@ mac-ocr searchable-pdf --merge -o lease.pdf page1.jpg page2.jpg
 - **`--image-page-dpi <36–2400>`** overrides image input page sizing only. OCR still uses the original full-resolution image; PDF inputs are unaffected. `--pdf-dpi` remains PDF-page rasterization for OCR.
 - **`--image-downsample-dpi <36–2400>`** caps the visible image layer resolution for image inputs only. OCR and page size are unaffected; PDF inputs are not downsampled.
 - **`MAC_OCR_DEBUG=1`** enables searchable-PDF debugging for file outputs: visible OCR boxes are drawn into the PDF, and a JSONL sidecar is written next to each output PDF (`file.pdf` → `file.jsonl`). The sidecar has one record per output page in page order with source/page metadata, OCR text, line boxes, word boxes, confidence, OCR image size, and PDF media box. Debug mode is rejected with `-o -`.
-- **`MAC_OCR_TILED=1`** enables an experimental extra tiled OCR pass for searchable PDFs. It can recover small text missed by full-page Vision OCR, but can add duplicate/partial text; pair it with `MAC_OCR_DEBUG=1` and inspect `sourcePass`, `tile`, and `edgeTouching` in the sidecar. Tiled OCR is skipped when `--roi` is set.
+- **`--ocr-strategy auto|standard|partitioned`** controls searchable-PDF OCR strategy. `auto` is default and may run recursive partitioned OCR for large pages with small detected text; `standard` forces full-page OCR only; `partitioned` forces partitioned OCR for eligible pages. Pair with `MAC_OCR_DEBUG=1` and inspect `sourcePass`, `partition`, `depth`, and `edgeTouching` in the sidecar. Partitioned OCR is skipped when `--roi` is set.
 - Accepts the same recognition options as OCR (`--fast`, `-l`, `-c`, `--pdf-dpi`, `--roi`, `--password`, custom words, etc.).
 - Status is **interactive-only** on stderr: a live `[page/total]` counter + `name → path` line on a terminal; piped runs are silent on success (errors only) — no quiet flag needed. stdout stays clean for `-o -`. The `ocr` command shows the same counter when results aren't streaming to the terminal.
 
@@ -135,7 +135,7 @@ const langs = await supportedLanguages()                  // → string[] (ocr +
 ```
 
 - `ocr()` throws if given a multi-page PDF — use `ocr.pages()`.
-- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
+- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `ocrStrategy`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
 - Failures throw `MacOcrError` with `.kind` (`'usage'`, `'runtime'`, `'unavailable'`, …) and `.stderr`.
 
 ## Patterns

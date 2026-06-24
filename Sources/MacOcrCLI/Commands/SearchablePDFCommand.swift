@@ -3,6 +3,12 @@ import Darwin
 import Foundation
 import MacOcrCore
 
+extension OCRStrategy: ExpressibleByArgument {
+	public init?(argument: String) {
+		self.init(rawValue: argument)
+	}
+}
+
 public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	public static let configuration = CommandConfiguration(
 		commandName: "searchable-pdf",
@@ -68,6 +74,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 
 	@OptionGroup var recognition: RecognitionOptions
 
+	@Option(name: .long, help: "OCR strategy for searchable PDFs: auto, standard, or partitioned. (default: auto)")
+	var ocrStrategy: OCRStrategy = .auto
+
 	@Option(name: .long, help: "PDF rendering DPI for OCR: 'auto' (default) or an integer 72–600.")
 	var pdfDpi: String = "auto"
 
@@ -84,6 +93,9 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		}
 		if let roi {
 			_ = try parseRegionOfInterest(roi)
+		}
+		if ocrStrategy == .partitioned, roi != nil {
+			throw ValidationError("--ocr-strategy partitioned cannot be combined with --roi. Use --ocr-strategy auto or standard.")
 		}
 		// Validate output routing up front so large PDFs/URLs aren't rendered
 		// only to fail at write time.
@@ -119,6 +131,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				imageQuality: imageQuality,
 				imagePageDpi: imagePageDpi,
 				imageDownsampleDpi: imageDownsampleDpi,
+				ocrStrategy: ocrStrategy,
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -154,6 +167,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 					imageQuality: imageQuality,
 					imagePageDpi: imagePageDpi,
 					imageDownsampleDpi: imageDownsampleDpi,
+					ocrStrategy: ocrStrategy,
 					debugOptions: debugOutput?.options,
 					onProgress: { reporter.update(done: $0, total: $1) }
 				)
@@ -191,6 +205,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				imageQuality: imageQuality,
 				imagePageDpi: imagePageDpi,
 				imageDownsampleDpi: imageDownsampleDpi,
+				ocrStrategy: ocrStrategy,
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -219,6 +234,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			imageQuality: imageQuality,
 			imagePageDpi: imagePageDpi,
 			imageDownsampleDpi: imageDownsampleDpi,
+			ocrStrategy: ocrStrategy,
 			debugOptions: debugOutput?.options,
 			onProgress: { reporter.update(done: $0, total: $1) }
 		)

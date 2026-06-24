@@ -47,6 +47,10 @@ public struct OCROptions: Sendable {
 	}
 }
 
+public enum OCRStrategy: String, CaseIterable, Sendable {
+	case auto, standard, partitioned
+}
+
 public struct OCRResult: ResultPayload {
 	public let text: String
 	public let observations: [Observation]
@@ -85,13 +89,15 @@ public struct WordBox: Sendable {
 
 public struct ObservationSource: Sendable {
 	public let pass: String
-	public let tile: BoundingBox?
+	public let partition: BoundingBox?
 	public let edgeTouching: Bool
+	public let depth: Int?
 
-	public init(pass: String, tile: BoundingBox? = nil, edgeTouching: Bool = false) {
+	public init(pass: String, partition: BoundingBox? = nil, edgeTouching: Bool = false, depth: Int? = nil) {
 		self.pass = pass
-		self.tile = tile
+		self.partition = partition
 		self.edgeTouching = edgeTouching
+		self.depth = depth
 	}
 }
 

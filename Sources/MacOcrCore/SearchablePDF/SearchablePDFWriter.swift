@@ -54,6 +54,7 @@ public enum SearchablePDF {
 		imageQuality: Double? = nil,
 		imagePageDpi: Double? = nil,
 		imageDownsampleDpi: Double? = nil,
+		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
@@ -93,6 +94,7 @@ public enum SearchablePDF {
 						sourceIndex: 1,
 						outputPageOffset: 0,
 						outputPageCount: pageCount,
+						ocrStrategy: ocrStrategy,
 						writer: debugWriter
 					)
 				}
@@ -115,6 +117,7 @@ public enum SearchablePDF {
 		let pagesWritten = try await appendSource(
 			producer, displayName: source.displayName, options: options, pdfDpi: pdfDpi,
 			ocrAllPages: ocrAllPages, into: context,
+			ocrStrategy: ocrStrategy,
 			debugContext: debugWriter.map {
 				DebugContext(
 					writer: $0,
@@ -148,6 +151,7 @@ public enum SearchablePDF {
 		imageQuality: Double? = nil,
 		imagePageDpi: Double? = nil,
 		imageDownsampleDpi: Double? = nil,
+		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
@@ -170,6 +174,7 @@ public enum SearchablePDF {
 			imageQuality: imageQuality,
 			imagePageDpi: imagePageDpi,
 			imageDownsampleDpi: imageDownsampleDpi,
+			ocrStrategy: ocrStrategy,
 			into: context,
 			debugWriter: debugWriter,
 			onProgress: onProgress
@@ -193,6 +198,7 @@ public enum SearchablePDF {
 		imageQuality: Double? = nil,
 		imagePageDpi: Double? = nil,
 		imageDownsampleDpi: Double? = nil,
+		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws {
@@ -214,6 +220,7 @@ public enum SearchablePDF {
 			imageQuality: imageQuality,
 			imagePageDpi: imagePageDpi,
 			imageDownsampleDpi: imageDownsampleDpi,
+			ocrStrategy: ocrStrategy,
 			into: context,
 			debugWriter: debugWriter,
 			onProgress: onProgress
@@ -235,6 +242,7 @@ public enum SearchablePDF {
 		imageQuality: Double?,
 		imagePageDpi: Double?,
 		imageDownsampleDpi: Double?,
+		ocrStrategy: OCRStrategy,
 		into context: CGContext,
 		debugWriter: DebugWriter?,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
@@ -270,6 +278,7 @@ public enum SearchablePDF {
 				pdfDpi: pdfDpi,
 				ocrAllPages: ocrAllPages,
 				into: context,
+				ocrStrategy: ocrStrategy,
 				debugContext: debugWriter.map {
 					DebugContext(
 						writer: $0,
@@ -370,7 +379,47 @@ public enum SearchablePDF {
 		let outputPageCount: Int
 		let ocrImage: DebugImageSize?
 		let pdfPage: DebugPDFPage
+		let ocrStrategy: DebugOCRStrategy
 		let ocr: DebugOCR
+	}
+
+	private struct RecognizedPage {
+		let ocr: OCRResult
+		let strategy: DebugOCRStrategy
+	}
+
+	private struct DebugOCRStrategy: Encodable {
+		let mode: String
+		let enabled: Bool
+		let reason: String
+		let megapixels: Double?
+		let maxDimension: Int?
+		let medianTextHeight: Double?
+		let p25TextHeight: Double?
+		let partitionCount: Int?
+		let maxDepth: Int?
+
+		init(
+			mode: String,
+			enabled: Bool,
+			reason: String,
+			megapixels: Double? = nil,
+			maxDimension: Int? = nil,
+			medianTextHeight: Double? = nil,
+			p25TextHeight: Double? = nil,
+			partitionCount: Int? = nil,
+			maxDepth: Int? = nil
+		) {
+			self.mode = mode
+			self.enabled = enabled
+			self.reason = reason
+			self.megapixels = megapixels
+			self.maxDimension = maxDimension
+			self.medianTextHeight = medianTextHeight
+			self.p25TextHeight = p25TextHeight
+			self.partitionCount = partitionCount
+			self.maxDepth = maxDepth
+		}
 	}
 
 	private struct DebugImageSize: Encodable {
@@ -419,7 +468,8 @@ public enum SearchablePDF {
 		let candidates: [TextCandidate]
 		let words: [DebugWord]
 		let sourcePass: String
-		let tile: BoundingBox?
+		let partition: BoundingBox?
+		let depth: Int?
 		let edgeTouching: Bool
 
 		init(observation: Observation) {
@@ -430,7 +480,8 @@ public enum SearchablePDF {
 			candidates = observation.candidates
 			words = observation.words.map(DebugWord.init(word:))
 			sourcePass = observation.source?.pass ?? "full"
-			tile = observation.source?.tile
+			partition = observation.source?.partition
+			depth = observation.source?.depth
 			edgeTouching = observation.source?.edgeTouching ?? false
 		}
 	}
@@ -515,6 +566,7 @@ public enum SearchablePDF {
 		sourceIndex: Int,
 		outputPageOffset: Int,
 		outputPageCount: Int,
+		ocrStrategy: OCRStrategy,
 		writer: DebugWriter
 	) throws {
 		let sourcePageCount = document.numberOfPages
@@ -539,6 +591,7 @@ public enum SearchablePDF {
 					ocrImage: nil,
 					mediaBox: mediaBox,
 					pdfRotation: Int(page.rotationAngle),
+					ocrStrategy: DebugOCRStrategy(mode: ocrStrategy.rawValue, enabled: false, reason: "existing-text-layer"),
 					ocr: OCRResult(text: "", observations: []),
 					skipped: true,
 					skipReason: "existing-text-layer"
@@ -586,6 +639,7 @@ public enum SearchablePDF {
 		pdfDpi: Int?,
 		ocrAllPages: Bool,
 		into context: CGContext,
+		ocrStrategy: OCRStrategy,
 		debugContext: DebugContext? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
@@ -661,7 +715,7 @@ public enum SearchablePDF {
 
 			onProgress?(0, pageCount)
 			for (index, plan) in plans.enumerated() {
-				let ocr: OCRResult
+				let result: RecognizedPage
 				let ocrImage: DebugImageSize?
 				let skipReason: String?
 				if plan.needsOCR {
@@ -681,16 +735,19 @@ public enum SearchablePDF {
 					}
 					ocrImage = DebugImageSize(width: raster.width, height: raster.height)
 					skipReason = nil
-					ocr = try await recognize(raster, options: options)
+					result = try await recognize(raster, options: options, ocrStrategy: ocrStrategy)
 				} else {
 					ocrImage = nil
 					skipReason = "existing-text-layer"
-					ocr = OCRResult(text: "", observations: [])
+					result = RecognizedPage(
+						ocr: OCRResult(text: "", observations: []),
+						strategy: DebugOCRStrategy(mode: ocrStrategy.rawValue, enabled: false, reason: "existing-text-layer")
+					)
 				}
 
 				writePage(
 					mediaBox: plan.displayBox,
-					ocr: ocr,
+					ocr: result.ocr,
 					into: context,
 					debugOverlay: debugContext?.writer.options.drawOverlay == true
 				) { context in
@@ -706,7 +763,8 @@ public enum SearchablePDF {
 						outputPageCount: debugContext?.outputPageCount ?? pageCount,
 						ocrImage: ocrImage,
 						mediaBox: plan.displayBox,
-						ocr: ocr,
+						ocrStrategy: result.strategy,
+						ocr: result.ocr,
 						skipped: !plan.needsOCR,
 						skipReason: skipReason
 					))
@@ -718,10 +776,10 @@ public enum SearchablePDF {
 			onProgress?(0, 1)
 			let image = page.image
 			let mediaBox = page.mediaBox
-			let ocr = try await recognize(image, options: options)
+			let result = try await recognize(image, options: options, ocrStrategy: ocrStrategy)
 			writePage(
 				mediaBox: mediaBox,
-				ocr: ocr,
+				ocr: result.ocr,
 				into: context,
 				debugOverlay: debugContext?.writer.options.drawOverlay == true
 			) { context in
@@ -740,7 +798,8 @@ public enum SearchablePDF {
 					outputPageCount: debugContext?.outputPageCount ?? 1,
 					ocrImage: DebugImageSize(width: image.width, height: image.height),
 					mediaBox: mediaBox,
-					ocr: ocr,
+					ocrStrategy: result.strategy,
+					ocr: result.ocr,
 					skipped: false,
 					skipReason: nil
 				))
@@ -971,6 +1030,7 @@ public enum SearchablePDF {
 		ocrImage: DebugImageSize?,
 		mediaBox: CGRect,
 		pdfRotation: Int = 0,
+		ocrStrategy: DebugOCRStrategy,
 		ocr: OCRResult,
 		skipped: Bool,
 		skipReason: String?
@@ -984,6 +1044,7 @@ public enum SearchablePDF {
 			outputPageCount: outputPageCount,
 			ocrImage: ocrImage,
 			pdfPage: DebugPDFPage(mediaBox: DebugRect(mediaBox), rotation: pdfRotation),
+			ocrStrategy: ocrStrategy,
 			ocr: DebugOCR(ocr: ocr, skipped: skipped, skipReason: skipReason)
 		)
 	}
@@ -1143,7 +1204,7 @@ public enum SearchablePDF {
 
 	// MARK: - OCR
 
-	private static func recognize(_ image: CGImage, options: OCROptions) async throws -> OCRResult {
+	private static func recognize(_ image: CGImage, options: OCROptions, ocrStrategy: OCRStrategy) async throws -> RecognizedPage {
 		// The invisible layer is positioned per word, so opt in to the
 		// word-geometry computation the plain `ocr` path skips.
 		let wordOptions: OCROptions = {
@@ -1151,24 +1212,12 @@ public enum SearchablePDF {
 			options.includeWordGeometry = true
 			return options
 		}()
-		guard tiledOCREnabled, wordOptions.regionOfInterest == nil else {
-			return try await recognize(image, options: wordOptions, source: ObservationSource(pass: "full"))
+		let full = try await recognize(image, options: wordOptions, source: ObservationSource(pass: "full"))
+		let decision = partitionDecision(strategy: ocrStrategy, image: image, fullResult: full, options: wordOptions)
+		guard decision.enabled else {
+			return RecognizedPage(ocr: full, strategy: decision.strategy)
 		}
-		return try await recognizeTiled(image, options: wordOptions)
-	}
-
-	private static var tiledOCREnabled: Bool {
-		guard let value = ProcessInfo.processInfo.environment["MAC_OCR_TILED"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-			!value.isEmpty
-		else {
-			return false
-		}
-		switch value.lowercased() {
-		case "0", "false", "no", "off":
-			return false
-		default:
-			return true
-		}
+		return try await recognizePartitioned(image, options: wordOptions, fullResult: full, decision: decision)
 	}
 
 	private static func recognize(_ image: CGImage, options: OCROptions, source: ObservationSource) async throws -> OCRResult {
@@ -1179,45 +1228,210 @@ public enum SearchablePDF {
 		return withSource(source, result: result)
 	}
 
-	private static func recognizeTiled(_ image: CGImage, options: OCROptions) async throws -> OCRResult {
-		var observations = try await recognize(image, options: options, source: ObservationSource(pass: "full")).observations
-		for tile in ocrTiles {
-			guard let tileImage = crop(image, to: tile) else { continue }
+	private static func recognizePartitioned(
+		_ image: CGImage,
+		options: OCROptions,
+		fullResult: OCRResult,
+		decision: PartitionDecision
+	) async throws -> RecognizedPage {
+		var observations = fullResult.observations
+		var queue = split(Partition(box: BoundingBox(x: 0, y: 0, width: 1, height: 1), depth: 0), image: image)
+		var partitionCount = 0
+
+		while !queue.isEmpty, partitionCount < maxPartitions {
+			let partition = queue.removeFirst()
+			guard let partitionImage = crop(image, to: partition.box) else { continue }
 			let localResult = try await recognize(
-				tileImage,
+				partitionImage,
 				options: options,
-				source: ObservationSource(pass: "tile", tile: tile, edgeTouching: false)
+				source: ObservationSource(pass: "partition", partition: partition.box, edgeTouching: false, depth: partition.depth)
 			)
+			partitionCount += 1
 			for observation in localResult.observations {
-				let remapped = remap(observation, from: tile)
-				guard shouldAcceptTileObservation(remapped, options: options) else { continue }
+				let remapped = remap(observation, from: partition)
+				guard shouldAcceptPartitionObservation(remapped, options: options) else { continue }
 				merge(remapped, into: &observations)
 			}
+
+			if partition.depth < maxPartitionDepth,
+				partitionCount + queue.count < maxPartitions,
+				shouldSplitPartition(localResult, image: partitionImage, options: options)
+			{
+				queue.append(contentsOf: split(partition, image: image))
+			}
 		}
+
 		let sorted = observations.sorted { lhs, rhs in
 			if abs(lhs.boundingBox.y - rhs.boundingBox.y) > 0.01 {
 				return lhs.boundingBox.y < rhs.boundingBox.y
 			}
 			return lhs.boundingBox.x < rhs.boundingBox.x
 		}
-		return OCRResult(text: sorted.map(\.text).joined(separator: "\n"), observations: sorted)
+		let strategy = DebugOCRStrategy(
+			mode: decision.strategy.mode,
+			enabled: true,
+			reason: decision.strategy.reason,
+			megapixels: decision.strategy.megapixels,
+			maxDimension: decision.strategy.maxDimension,
+			medianTextHeight: decision.strategy.medianTextHeight,
+			p25TextHeight: decision.strategy.p25TextHeight,
+			partitionCount: partitionCount,
+			maxDepth: maxPartitionDepth
+		)
+		return RecognizedPage(
+			ocr: OCRResult(text: sorted.map(\.text).joined(separator: "\n"), observations: sorted),
+			strategy: strategy
+		)
 	}
 
-	private static let ocrTiles: [BoundingBox] = [
-		BoundingBox(x: 0, y: 0, width: 0.6, height: 0.6),
-		BoundingBox(x: 0.4, y: 0, width: 0.6, height: 0.6),
-		BoundingBox(x: 0, y: 0.4, width: 0.6, height: 0.6),
-		BoundingBox(x: 0.4, y: 0.4, width: 0.6, height: 0.6),
-	]
+	private struct PartitionDecision {
+		let enabled: Bool
+		let strategy: DebugOCRStrategy
+	}
 
-	private static func crop(_ image: CGImage, to tile: BoundingBox) -> CGImage? {
+	private struct Partition {
+		let box: BoundingBox
+		let depth: Int
+	}
+
+	private static let minPartitionMegapixels = 1.5
+	private static let minPartitionMaxDimension = 1200
+	private static let autoMinMegapixels = 8.0
+	private static let autoMinMaxDimension = 2500
+	private static let smallTextP25Threshold = 0.015
+	private static let smallTextMedianThreshold = 0.02
+	private static let maxPartitionDepth = 2
+	private static let maxPartitions = 8
+
+	private static func crop(_ image: CGImage, to partition: BoundingBox) -> CGImage? {
 		let rect = CGRect(
-			x: CGFloat(tile.x) * CGFloat(image.width),
-			y: CGFloat(tile.y) * CGFloat(image.height),
-			width: CGFloat(tile.width) * CGFloat(image.width),
-			height: CGFloat(tile.height) * CGFloat(image.height)
+			x: CGFloat(partition.x) * CGFloat(image.width),
+			y: CGFloat(partition.y) * CGFloat(image.height),
+			width: CGFloat(partition.width) * CGFloat(image.width),
+			height: CGFloat(partition.height) * CGFloat(image.height)
 		).integral
 		return image.cropping(to: rect)
+	}
+
+	private static func partitionDecision(
+		strategy: OCRStrategy,
+		image: CGImage,
+		fullResult: OCRResult,
+		options: OCROptions
+	) -> PartitionDecision {
+		let metrics = ocrMetrics(image: image, result: fullResult)
+		if options.regionOfInterest != nil {
+			return decision(strategy: strategy, enabled: false, reason: "roi-set", metrics: metrics)
+		}
+		switch strategy {
+		case .standard:
+			return decision(strategy: strategy, enabled: false, reason: "standard", metrics: metrics)
+		case .partitioned:
+			return decision(strategy: strategy, enabled: true, reason: "forced", metrics: metrics)
+		case .auto:
+			guard metrics.megapixels >= autoMinMegapixels || metrics.maxDimension >= autoMinMaxDimension else {
+				return decision(strategy: strategy, enabled: false, reason: "image-small", metrics: metrics)
+			}
+			guard !fullResult.observations.isEmpty else {
+				return decision(strategy: strategy, enabled: true, reason: "large-image-no-text", metrics: metrics)
+			}
+			if (metrics.p25TextHeight ?? 1) < smallTextP25Threshold {
+				return decision(strategy: strategy, enabled: true, reason: "large-image-small-p25-text", metrics: metrics)
+			}
+			if (metrics.medianTextHeight ?? 1) < smallTextMedianThreshold {
+				return decision(strategy: strategy, enabled: true, reason: "large-image-small-median-text", metrics: metrics)
+			}
+			return decision(strategy: strategy, enabled: false, reason: "text-large-enough", metrics: metrics)
+		}
+	}
+
+	private static func decision(strategy: OCRStrategy, enabled: Bool, reason: String, metrics: OCRMetrics) -> PartitionDecision {
+		PartitionDecision(
+			enabled: enabled,
+			strategy: DebugOCRStrategy(
+				mode: strategy.rawValue,
+				enabled: enabled,
+				reason: reason,
+				megapixels: metrics.megapixels,
+				maxDimension: metrics.maxDimension,
+				medianTextHeight: metrics.medianTextHeight,
+				p25TextHeight: metrics.p25TextHeight,
+				partitionCount: enabled ? 0 : nil,
+				maxDepth: enabled ? maxPartitionDepth : nil
+			)
+		)
+	}
+
+	private struct OCRMetrics {
+		let megapixels: Double
+		let maxDimension: Int
+		let medianTextHeight: Double?
+		let p25TextHeight: Double?
+	}
+
+	private static func ocrMetrics(image: CGImage, result: OCRResult) -> OCRMetrics {
+		let heights = result.observations.map(\.boundingBox.height).sorted()
+		return OCRMetrics(
+			megapixels: Double(image.width * image.height) / 1_000_000,
+			maxDimension: max(image.width, image.height),
+			medianTextHeight: percentile(0.5, values: heights),
+			p25TextHeight: percentile(0.25, values: heights)
+		)
+	}
+
+	private static func percentile(_ percentile: Double, values: [Double]) -> Double? {
+		guard !values.isEmpty else { return nil }
+		let index = Int((Double(values.count - 1) * percentile).rounded(.down))
+		return values[min(max(index, 0), values.count - 1)]
+	}
+
+	private static func split(_ partition: Partition, image: CGImage) -> [Partition] {
+		let partitionWidth = partition.box.width * Double(image.width)
+		let partitionHeight = partition.box.height * Double(image.height)
+		let depth = partition.depth + 1
+		if partitionWidth >= partitionHeight {
+			return [
+				Partition(
+					box: BoundingBox(x: partition.box.x, y: partition.box.y, width: partition.box.width * 0.55, height: partition.box.height),
+					depth: depth
+				),
+				Partition(
+					box: BoundingBox(
+						x: partition.box.x + partition.box.width * 0.45,
+						y: partition.box.y,
+						width: partition.box.width * 0.55,
+						height: partition.box.height
+					),
+					depth: depth
+				),
+			]
+		}
+		return [
+			Partition(
+				box: BoundingBox(x: partition.box.x, y: partition.box.y, width: partition.box.width, height: partition.box.height * 0.55),
+				depth: depth
+			),
+			Partition(
+				box: BoundingBox(
+					x: partition.box.x,
+					y: partition.box.y + partition.box.height * 0.45,
+					width: partition.box.width,
+					height: partition.box.height * 0.55
+				),
+				depth: depth
+			),
+		]
+	}
+
+	private static func shouldSplitPartition(_ result: OCRResult, image: CGImage, options: OCROptions) -> Bool {
+		let megapixels = Double(image.width * image.height) / 1_000_000
+		let maxDimension = max(image.width, image.height)
+		guard megapixels >= minPartitionMegapixels || maxDimension >= minPartitionMaxDimension else { return false }
+		guard !result.observations.isEmpty else { return false }
+		let heights = result.observations.map(\.boundingBox.height).sorted()
+		if let p25 = percentile(0.25, values: heights), p25 < smallTextP25Threshold { return true }
+		if let median = percentile(0.5, values: heights), median < smallTextMedianThreshold { return true }
+		return false
 	}
 
 	private static func withSource(_ source: ObservationSource, result: OCRResult) -> OCRResult {
@@ -1235,10 +1449,10 @@ public enum SearchablePDF {
 		return OCRResult(text: observations.map(\.text).joined(separator: "\n"), observations: observations)
 	}
 
-	private static func remap(_ observation: Observation, from tile: BoundingBox) -> Observation {
-		let box = remap(observation.boundingBox, from: tile)
+	private static func remap(_ observation: Observation, from partition: Partition) -> Observation {
+		let box = remap(observation.boundingBox, from: partition.box)
 		let words = observation.words.map { word in
-			WordBox(text: word.text, boundingBox: remap(word.boundingBox, from: tile))
+			WordBox(text: word.text, boundingBox: remap(word.boundingBox, from: partition.box))
 		}
 		let edgeTouching = touchesEdge(observation.boundingBox)
 		return Observation(
@@ -1248,7 +1462,7 @@ public enum SearchablePDF {
 			boundingBox: box,
 			candidates: observation.candidates,
 			words: words,
-			source: ObservationSource(pass: "tile", tile: tile, edgeTouching: edgeTouching)
+			source: ObservationSource(pass: "partition", partition: partition.box, edgeTouching: edgeTouching, depth: partition.depth)
 		)
 	}
 
@@ -1288,8 +1502,8 @@ public enum SearchablePDF {
 		}
 	}
 
-	private static func shouldAcceptTileObservation(_ observation: Observation, options: OCROptions) -> Bool {
-		guard observation.source?.pass == "tile" else { return true }
+	private static func shouldAcceptPartitionObservation(_ observation: Observation, options: OCROptions) -> Bool {
+		guard observation.source?.pass == "partition" else { return true }
 		let text = observation.text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard text.count > 1 else { return false }
 		guard observation.source?.edgeTouching != true else { return false }

@@ -295,6 +295,19 @@ import Testing
 		#expect(result.stderr.contains("--image-downsample-dpi must be between 36 and 2400"))
 	}
 
+	@Test func partitionedOCRStrategyRejectsROI() throws {
+		let result = try TestSupport.run([
+			"searchable-pdf",
+			"--ocr-strategy",
+			"partitioned",
+			"--roi",
+			"0,0,1,1",
+			TestSupport.fixturePath("hello.png"),
+		])
+		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
+		#expect(result.stderr.contains("--ocr-strategy partitioned cannot be combined with --roi"))
+	}
+
 	@Test func batchContinuesAfterAFailedInput() throws {
 		// Fail-soft: a bad input is reported but does not abort the batch, so a
 		// good input listed *after* it is still written. Exit is non-zero.

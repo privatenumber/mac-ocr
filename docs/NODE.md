@@ -93,6 +93,7 @@ const fastLanguages = await supportedLanguages({ fast: true })
 | Option | Type | Effect |
 |---|---|---|
 | `ocrAllPages` | `boolean` | OCR every page, including pages that already have selectable text (skipped by default). For hybrid scan-plus-stamp pages; existing digital text may appear twice in copy/search |
+| `ocrStrategy` | `'auto' \| 'standard' \| 'partitioned'` | Searchable PDF OCR strategy. Default `auto`; use `standard` to force full-page OCR only |
 | `imageQuality` | `number` | Visible image layer quality for image inputs (`0`–`1`). OCR still uses the original full-resolution image; PDF inputs are not recompressed |
 | `imagePageDpi` | `number` | DPI to use for image input page sizing. OCR still uses the original full-resolution image; PDF inputs are not affected |
 | `imageDownsampleDpi` | `number` | Maximum DPI for the visible image layer of image inputs. OCR and page size are not affected; PDF inputs are not downsampled |
