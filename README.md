@@ -94,7 +94,7 @@ Image inputs are sized from embedded DPI metadata when available. Images without
 
 Set `MAC_OCR_DEBUG=1` when creating searchable PDFs to draw visible OCR bounding boxes into the PDF and write a JSONL sidecar next to each output PDF. For example, `lease.pdf` gets `lease.jsonl`. The sidecar contains one record per output page in page order, including recognized text, line boxes, word boxes, confidence, OCR image size, and PDF media box. Debug mode requires file output; it is not available with `-o -`.
 
-Searchable PDFs use `--ocr-strategy auto` by default: after full-page OCR, large pages with small detected text may get an additional partitioned OCR pass to recover text Vision misses in full-page context. Use `--ocr-strategy standard` to opt out, or `--ocr-strategy partitioned` to force the partitioned pass for eligible pages. Partitioned OCR is skipped when `--roi` is set.
+Searchable PDFs use `--ocr-strategy auto` by default: after full-page OCR, large pages with small detected text may get an additional partitioned OCR pass to recover text Vision misses in full-page context. Use `--ocr-strategy standard` to opt out, or `--ocr-strategy partitioned` to force the partitioned pass for eligible pages. Auto mode skips partitioning when `--roi` is set; forced `partitioned` mode cannot be combined with `--roi`.
 
 In non-merge mode, pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 

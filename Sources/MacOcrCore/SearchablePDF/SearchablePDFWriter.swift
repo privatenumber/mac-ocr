@@ -1454,7 +1454,7 @@ public enum SearchablePDF {
 		let words = observation.words.map { word in
 			WordBox(text: word.text, boundingBox: remap(word.boundingBox, from: partition.box))
 		}
-		let edgeTouching = touchesEdge(observation.boundingBox)
+		let edgeTouching = touchesInternalEdge(observation.boundingBox, partition: partition.box)
 		return Observation(
 			text: observation.text,
 			confidence: observation.confidence,
@@ -1475,12 +1475,14 @@ public enum SearchablePDF {
 		)
 	}
 
-	private static func touchesEdge(_ box: BoundingBox) -> Bool {
+	private static func touchesInternalEdge(_ box: BoundingBox, partition: BoundingBox) -> Bool {
 		let threshold = 0.02
-		return box.x <= threshold
-			|| box.y <= threshold
-			|| box.x + box.width >= 1 - threshold
-			|| box.y + box.height >= 1 - threshold
+		let pageThreshold = 0.0001
+		let touchesLeft = box.x <= threshold && partition.x > pageThreshold
+		let touchesTop = box.y <= threshold && partition.y > pageThreshold
+		let touchesRight = box.x + box.width >= 1 - threshold && partition.x + partition.width < 1 - pageThreshold
+		let touchesBottom = box.y + box.height >= 1 - threshold && partition.y + partition.height < 1 - pageThreshold
+		return touchesLeft || touchesTop || touchesRight || touchesBottom
 	}
 
 	private static func merge(_ observation: Observation, into observations: inout [Observation]) {
@@ -1516,8 +1518,12 @@ public enum SearchablePDF {
 	}
 
 	private static func isDuplicate(_ lhs: Observation, _ rhs: Observation) -> Bool {
-		guard intersectionOverUnion(lhs.boundingBox, rhs.boundingBox) >= 0.5 else { return false }
-		return lhs.text == rhs.text || lhs.text.contains(rhs.text) || rhs.text.contains(lhs.text)
+		let lhsText = lhs.text.trimmingCharacters(in: .whitespacesAndNewlines)
+		let rhsText = rhs.text.trimmingCharacters(in: .whitespacesAndNewlines)
+		let textOverlaps = lhsText == rhsText || lhsText.contains(rhsText) || rhsText.contains(lhsText)
+		guard textOverlaps else { return false }
+		if intersectionOverUnion(lhs.boundingBox, rhs.boundingBox) >= 0.5 { return true }
+		return intersectionOverSmallerArea(lhs.boundingBox, rhs.boundingBox) >= 0.6
 	}
 
 	private static func score(_ observation: Observation) -> Double {
@@ -1528,16 +1534,27 @@ public enum SearchablePDF {
 	}
 
 	private static func intersectionOverUnion(_ lhs: BoundingBox, _ rhs: BoundingBox) -> Double {
+		let intersection = intersectionArea(lhs, rhs)
+		guard intersection > 0 else { return 0 }
+		let union = lhs.width * lhs.height + rhs.width * rhs.height - intersection
+		return union > 0 ? intersection / union : 0
+	}
+
+	private static func intersectionOverSmallerArea(_ lhs: BoundingBox, _ rhs: BoundingBox) -> Double {
+		let intersection = intersectionArea(lhs, rhs)
+		guard intersection > 0 else { return 0 }
+		let smallerArea = min(lhs.width * lhs.height, rhs.width * rhs.height)
+		return smallerArea > 0 ? intersection / smallerArea : 0
+	}
+
+	private static func intersectionArea(_ lhs: BoundingBox, _ rhs: BoundingBox) -> Double {
 		let lhsMaxX = lhs.x + lhs.width
 		let lhsMaxY = lhs.y + lhs.height
 		let rhsMaxX = rhs.x + rhs.width
 		let rhsMaxY = rhs.y + rhs.height
 		let intersectionWidth = max(0, min(lhsMaxX, rhsMaxX) - max(lhs.x, rhs.x))
 		let intersectionHeight = max(0, min(lhsMaxY, rhsMaxY) - max(lhs.y, rhs.y))
-		let intersection = intersectionWidth * intersectionHeight
-		guard intersection > 0 else { return 0 }
-		let union = lhs.width * lhs.height + rhs.width * rhs.height - intersection
-		return union > 0 ? intersection / union : 0
+		return intersectionWidth * intersectionHeight
 	}
 
 	/// Whether the page's content stream contains text-showing operators (`Tj`,
