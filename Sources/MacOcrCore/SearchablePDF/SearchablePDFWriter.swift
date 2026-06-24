@@ -28,6 +28,14 @@ public enum SearchablePDF {
 		}
 	}
 
+	public struct Warning: Sendable {
+		public let message: String
+
+		public init(message: String) {
+			self.message = message
+		}
+	}
+
 	/// Render a single source into a searchable PDF and return its bytes.
 	///
 	/// `ocrAllPages` disables the born-digital skip: every PDF page is OCR'd,
@@ -56,6 +64,7 @@ public enum SearchablePDF {
 		imageDownsampleDpi: Double? = nil,
 		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
+		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		try validateImageQuality(imageQuality)
@@ -135,6 +144,7 @@ public enum SearchablePDF {
 					renderOptions: renderOptions
 				)
 			},
+			onWarning: onWarning,
 			onProgress: onProgress
 		)
 
@@ -161,6 +171,7 @@ public enum SearchablePDF {
 		imageDownsampleDpi: Double? = nil,
 		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
+		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		let pdfData = NSMutableData()
@@ -185,6 +196,7 @@ public enum SearchablePDF {
 			ocrStrategy: ocrStrategy,
 			into: context,
 			debugWriter: debugWriter,
+			onWarning: onWarning,
 			onProgress: onProgress
 		)
 
@@ -208,6 +220,7 @@ public enum SearchablePDF {
 		imageDownsampleDpi: Double? = nil,
 		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
+		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws {
 		guard let consumer = CGDataConsumer(url: outputURL as CFURL),
@@ -231,6 +244,7 @@ public enum SearchablePDF {
 			ocrStrategy: ocrStrategy,
 			into: context,
 			debugWriter: debugWriter,
+			onWarning: onWarning,
 			onProgress: onProgress
 		)
 
@@ -253,6 +267,7 @@ public enum SearchablePDF {
 		ocrStrategy: OCRStrategy,
 		into context: CGContext,
 		debugWriter: DebugWriter?,
+		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
 		try validateImageQuality(imageQuality)
@@ -303,6 +318,7 @@ public enum SearchablePDF {
 						renderOptions: renderOptions
 					)
 				},
+				onWarning: onWarning,
 				onProgress: { done, _ in
 					if done > 0 {
 						onProgress?(completedBeforeSource + done, totalPages)
@@ -486,7 +502,6 @@ public enum SearchablePDF {
 		let enabled: Bool
 		let reason: String
 		let algorithm: String?
-		let maxDepth: Int?
 		let partitionCount: Int?
 		let metrics: DebugOCRMetrics
 		let thresholds: DebugPartitionThresholds
@@ -849,6 +864,7 @@ public enum SearchablePDF {
 		into context: CGContext,
 		ocrStrategy: OCRStrategy,
 		debugContext: DebugContext? = nil,
+		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
 		switch producer {
@@ -941,7 +957,7 @@ public enum SearchablePDF {
 						)
 					}
 					ocrImage = DebugImageSize(width: raster.width, height: raster.height)
-					result = try await recognize(raster, options: options, ocrStrategy: ocrStrategy)
+					result = try await recognize(raster, options: options, ocrStrategy: ocrStrategy, onWarning: onWarning)
 				} else {
 					ocrImage = nil
 					result = skippedPage(strategy: ocrStrategy, reason: "existing-text-layer")
@@ -976,7 +992,7 @@ public enum SearchablePDF {
 			onProgress?(0, 1)
 			let image = page.image
 			let mediaBox = page.mediaBox
-			let result = try await recognize(image, options: options, ocrStrategy: ocrStrategy)
+			let result = try await recognize(image, options: options, ocrStrategy: ocrStrategy, onWarning: onWarning)
 			writePage(
 				mediaBox: mediaBox,
 				ocr: result.ocr,
@@ -1430,7 +1446,12 @@ public enum SearchablePDF {
 
 	// MARK: - OCR
 
-	private static func recognize(_ image: CGImage, options: OCROptions, ocrStrategy: OCRStrategy) async throws -> RecognizedPage {
+	private static func recognize(
+		_ image: CGImage,
+		options: OCROptions,
+		ocrStrategy: OCRStrategy,
+		onWarning: ((Warning) -> Void)? = nil
+	) async throws -> RecognizedPage {
 		// The invisible layer is positioned per word, so opt in to the
 		// word-geometry computation the plain `ocr` path skips.
 		let wordOptions: OCROptions = {
@@ -1455,6 +1476,9 @@ public enum SearchablePDF {
 				ocr: full,
 				debug: DebugRecognizedPage(recognition: recognition, observations: fullDebugObservations)
 			)
+		}
+		if estimatedPartitionPasses(image: image, limit: partitionWarningEstimatedPasses) >= partitionWarningEstimatedPasses {
+			onWarning?(partitionWarning(image: image))
 		}
 		return try await recognizePartitioned(
 			image,
@@ -1487,7 +1511,7 @@ public enum SearchablePDF {
 		var partitionStats: [DebugPartitionStats] = []
 		var nextObservationId = fullDebugObservations.count + 1
 
-		while !queue.isEmpty, partitionCount < maxPartitions {
+		while !queue.isEmpty {
 			let partition = queue.removeFirst()
 			guard let partitionImage = crop(image, to: partition.box) else { continue }
 			partitionCount += 1
@@ -1532,10 +1556,7 @@ public enum SearchablePDF {
 				}
 			}
 
-			if partition.depth < maxPartitionDepth,
-				partitionCount + queue.count < maxPartitions,
-				shouldSplitPartition(localResult, image: partitionImage, options: options)
-			{
+			if shouldSplitPartition(localResult, image: partitionImage, options: options) {
 				queue.append(contentsOf: split(partition, image: image))
 			}
 		}
@@ -1571,16 +1592,19 @@ public enum SearchablePDF {
 		let depth: Int
 	}
 
-	private static let minPartitionMegapixels = 1.5
-	private static let minPartitionMaxDimension = 1200
+	// Vision does not publish its text recognizer's internal working resolution.
+	// A representative lease scan plateaued once regions landed in the
+	// low-single-digit megapixel range; below this, splitting adds cost without
+	// reliably adding glyph pixels for Vision to read.
+	private static let minPartitionMegapixels = 4.0
+	private static let minPartitionMaxDimension = 2000
 	private static let autoMinMegapixels = 8.0
 	private static let autoMinMaxDimension = 2500
 	private static let smallTextP25Threshold = 0.015
 	private static let smallTextMedianThreshold = 0.02
 	private static let minPartitionTextLength = 2
 	private static let minPartitionConfidence: Float = 0.3
-	private static let maxPartitionDepth = 2
-	private static let maxPartitions = 8
+	private static let partitionWarningEstimatedPasses = 64
 
 	private static func crop(_ image: CGImage, to partition: BoundingBox) -> CGImage? {
 		let rect = CGRect(
@@ -1628,6 +1652,32 @@ public enum SearchablePDF {
 		PartitionDecision(enabled: enabled, strategy: strategy, reason: reason, metrics: metrics)
 	}
 
+	private static func partitionWarning(image: CGImage) -> Warning {
+		let megapixels = Double(image.width * image.height) / 1_000_000
+		return Warning(
+			message: String(
+				format: "very large image (%dx%d, %.1f MP); partitioned OCR may take a while",
+				image.width,
+				image.height,
+				megapixels
+			)
+		)
+	}
+
+	private static func estimatedPartitionPasses(image: CGImage, limit: Int) -> Int {
+		var queue = split(Partition(box: BoundingBox(x: 0, y: 0, width: 1, height: 1), depth: 0), image: image)
+		var passes = 0
+		while !queue.isEmpty, passes < limit {
+			let partition = queue.removeFirst()
+			passes += 1
+			let width = Int((Double(image.width) * partition.box.width).rounded())
+			let height = Int((Double(image.height) * partition.box.height).rounded())
+			guard shouldSplitPartitionImage(width: width, height: height) else { continue }
+			queue.append(contentsOf: split(partition, image: image))
+		}
+		return passes
+	}
+
 	private static func skippedPage(strategy: OCRStrategy, reason: String) -> RecognizedPage {
 		let recognition = DebugRecognition(
 			strategy: strategy.rawValue,
@@ -1660,7 +1710,6 @@ public enum SearchablePDF {
 					enabled: decision.enabled,
 					reason: decision.reason,
 					algorithm: decision.enabled ? "recursive-bisection" : nil,
-					maxDepth: decision.enabled ? maxPartitionDepth : nil,
 					partitionCount: decision.enabled ? partitions?.count ?? 0 : nil,
 					metrics: DebugOCRMetrics(decision.metrics),
 					thresholds: DebugPartitionThresholds(),
@@ -1723,6 +1772,12 @@ public enum SearchablePDF {
 		)
 	}
 
+	private static func shouldSplitPartitionImage(width: Int, height: Int) -> Bool {
+		let megapixels = Double(width * height) / 1_000_000
+		let maxDimension = max(width, height)
+		return megapixels >= minPartitionMegapixels || maxDimension >= minPartitionMaxDimension
+	}
+
 	private static func percentile(_ percentile: Double, values: [Double]) -> Double? {
 		guard !values.isEmpty else { return nil }
 		let index = Int((Double(values.count - 1) * percentile).rounded(.down))
@@ -1768,10 +1823,8 @@ public enum SearchablePDF {
 	}
 
 	private static func shouldSplitPartition(_ result: OCRResult, image: CGImage, options: OCROptions) -> Bool {
-		let megapixels = Double(image.width * image.height) / 1_000_000
-		let maxDimension = max(image.width, image.height)
-		guard megapixels >= minPartitionMegapixels || maxDimension >= minPartitionMaxDimension else { return false }
-		guard !result.observations.isEmpty else { return false }
+		guard shouldSplitPartitionImage(width: image.width, height: image.height) else { return false }
+		guard !result.observations.isEmpty else { return true }
 		let heights = result.observations.map(\.boundingBox.height).sorted()
 		if let p25 = percentile(0.25, values: heights), p25 < smallTextP25Threshold { return true }
 		if let median = percentile(0.5, values: heights), median < smallTextMedianThreshold { return true }

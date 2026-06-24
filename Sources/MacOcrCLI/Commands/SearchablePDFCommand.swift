@@ -132,6 +132,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				imagePageDpi: imagePageDpi,
 				imageDownsampleDpi: imageDownsampleDpi,
 				ocrStrategy: ocrStrategy,
+				onWarning: { reporter.warning($0) },
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -169,6 +170,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 					imageDownsampleDpi: imageDownsampleDpi,
 					ocrStrategy: ocrStrategy,
 					debugOptions: debugOutput?.options,
+					onWarning: { reporter.warning($0) },
 					onProgress: { reporter.update(done: $0, total: $1) }
 				)
 				// Atomic: a crash mid-write must not replace a previous good
@@ -206,6 +208,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				imagePageDpi: imagePageDpi,
 				imageDownsampleDpi: imageDownsampleDpi,
 				ocrStrategy: ocrStrategy,
+				onWarning: { reporter.warning($0) },
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -236,6 +239,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			imageDownsampleDpi: imageDownsampleDpi,
 			ocrStrategy: ocrStrategy,
 			debugOptions: debugOutput?.options,
+			onWarning: { reporter.warning($0) },
 			onProgress: { reporter.update(done: $0, total: $1) }
 		)
 		try replaceFile(at: outputURL, with: tempURL)

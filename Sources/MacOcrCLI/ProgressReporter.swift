@@ -41,6 +41,14 @@ final class ProgressReporter {
 		fflush(stderr)
 	}
 
+	/// Advisory status for unusually expensive work. No-op unless stderr is an
+	/// interactive terminal, matching the live progress behavior above.
+	func warning(_ warning: SearchablePDF.Warning) {
+		guard interactive else { return }
+		fputs("\r\u{1b}[K\(name): \(warning.message)\n", stderr)
+		fflush(stderr)
+	}
+
 	/// Final status: clears the transient counter, then prints `name → path`
 	/// when there is a written path to announce (searchable-pdf file output).
 	/// No-op unless stderr is an interactive terminal.
