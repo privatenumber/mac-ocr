@@ -19,28 +19,28 @@ import MacAIKit
 // across document types (receipts, letters, invoices, legal filings, …) and the
 // exclusion keeps intermediaries (clerks, notaries, carriers) out of the name.
 let instructions = """
-You extract three facts from a scanned document's text and reply in exactly this \
-format, one per line, nothing else:
+	You extract three facts from a scanned document's text and reply in exactly this \
+	format, one per line, nothing else:
 
-party: <the main person or company the document is ABOUT — for example the \
-buyer, borrower, customer, sender, account holder, or the business that issued a \
-receipt or invoice. NEVER use someone who merely recorded, filed, processed, \
-witnessed, notarized, printed, or delivered it, such as a county clerk, \
-recorder, registrar, notary, or filing agent. Ignore "return to" and mailing \
-addresses. If several parties appear, choose the primary or first-named one — \
-for instance a party labeled "primary name", or the buyer or borrower.>
-type: <the kind of document — for example receipt, invoice, letter, statement, \
-contract, mortgage, deed, report, form>
-ref: <the main reference, invoice, order, account, or instrument number, or \
-leave this empty if there is none — never invent a number or pad with zeros>
+	party: <the main person or company the document is ABOUT — for example the \
+	buyer, borrower, customer, sender, account holder, or the business that issued a \
+	receipt or invoice. NEVER use someone who merely recorded, filed, processed, \
+	witnessed, notarized, printed, or delivered it, such as a county clerk, \
+	recorder, registrar, notary, or filing agent. Ignore "return to" and mailing \
+	addresses. If several parties appear, choose the primary or first-named one — \
+	for instance a party labeled "primary name", or the buyer or borrower.>
+	type: <the kind of document — for example receipt, invoice, letter, statement, \
+	contract, mortgage, deed, report, form>
+	ref: <the main reference, invoice, order, account, or instrument number, or \
+	leave this empty if there is none — never invent a number or pad with zeros>
 
-Rules:
-- Use only information present in the document.
-- Spell words correctly and fix obvious scan errors — for example a digit "0" \
-  used inside a word that should be the letter "o", or "1" that should be "l".
-- Copy any reference number exactly, digit for digit; do not alter numbers.
-- Keep each field short — a few words at most.
-"""
+	Rules:
+	- Use only information present in the document.
+	- Spell words correctly and fix obvious scan errors — for example a digit "0" \
+	  used inside a word that should be the letter "o", or "1" that should be "l".
+	- Copy any reference number exactly, digit for digit; do not alter numbers.
+	- Keep each field short — a few words at most.
+	"""
 
 func fail(_ message: String) -> Never {
 	FileHandle.standardError.write(Data(("name-file: " + message + "\n").utf8))
@@ -126,12 +126,14 @@ func run() async {
 		case "--batch":
 			batch = true
 		case "-h", "--help":
-			print("""
-			Usage:
-			  name-file                one document on stdin -> one name on stdout
-			  name-file FILE...        name each text file; prints "<file>\\t<name>" per line
-			  name-file --batch        NUL-separated documents on stdin -> one name per line
-			""")
+			print(
+				"""
+				Usage:
+				  name-file                one document on stdin -> one name on stdout
+				  name-file FILE...        name each text file; prints "<file>\\t<name>" per line
+				  name-file --batch        NUL-separated documents on stdin -> one name per line
+				"""
+			)
 			exit(0)
 		default:
 			paths.append(arg)
