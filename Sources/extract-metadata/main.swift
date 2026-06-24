@@ -140,19 +140,21 @@ func encodeJSON(_ value: Any) -> String {
 }
 
 @available(macOS 26.0, *)
-func extract(from text: String, schema: GenerationSchema) async -> String {
+func extract(from text: String, schema: GenerationSchema, backend: ModelBackend, limiter: RateLimiter) async -> String {
 	let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 	guard !trimmed.isEmpty else { return "{}" }
 
 	// Metadata fields can sit anywhere in a document, so send more context than
 	// the filename tool does. A full English wrapper avoids the language guardrail.
+	// The cloud backend's larger context window comfortably holds this clip.
 	let clipped = String(trimmed.prefix(4000))
-	let session = LanguageModelSession(instructions: instructions)
+	let session = makeSession(instructions: instructions, backend: backend)
 	let prompt = "Read the following scanned document and extract its metadata.\n\nDocument text:\n\(clipped)"
 
 	do {
 		// Schema-constrained generation yields JSON guaranteed to match the schema.
 		// No token cap: a cap could truncate the JSON and make it invalid.
+		await limiter.waitForSlot()
 		let content = try await session.respond(
 			to: prompt,
 			schema: schema,
@@ -176,11 +178,10 @@ func extract(from text: String, schema: GenerationSchema) async -> String {
 
 @available(macOS 26.0, *)
 func run() async {
-	if let reason = systemModelUnavailableReason() { fail(reason) }
-
 	var schemaSource: String?
 	var schemaInline: String?
 	var batch = false
+	var cloud = false
 	var paths: [String] = []
 	let args = Array(CommandLine.arguments.dropFirst())
 	var i = 0
@@ -197,6 +198,10 @@ func run() async {
 			schemaInline = args[i]
 		case "--batch":
 			batch = true
+		case "--cloud":
+			cloud = true
+		case "--device":
+			cloud = false
 		case "-h", "--help":
 			print(
 				"""
@@ -208,6 +213,12 @@ func run() async {
 
 				Schema is a JSON object of field -> { "type": …, "description": …, "optional": … }.
 				Types: string, integer, number, boolean, array (with "items"), object (with "properties").
+
+				Model backend:
+				  --device                 use the on-device model (default)
+				  --cloud                  use Apple's Private Cloud Compute model (larger, 32k context)
+				  (or set MAC_AI_BACKEND=device|cloud)
+				  MAC_AI_CLOUD_RPM=N       throttle cloud requests to N per minute (default 15, 0 = off)
 				"""
 			)
 			exit(0)
@@ -255,8 +266,13 @@ func run() async {
 		fail("invalid schema: \(error)")
 	}
 
+	let backend = ModelBackend.resolve(cloud: cloud)
+	if let reason = modelUnavailableReason(backend) { fail(reason) }
+	if let note = cloudQuotaWarning(backend) { warn(note) }
+	let limiter = makeRateLimiter(for: backend)
+
 	// Warm the model once so the first document isn't slower.
-	let warm = LanguageModelSession(instructions: instructions)
+	let warm = makeSession(instructions: instructions, backend: backend)
 	warm.prewarm()
 
 	let concurrency = defaultConcurrency()
@@ -267,7 +283,7 @@ func run() async {
 				warn("cannot read \(path)")
 				return "\(path)\t{}"
 			}
-			return "\(path)\t\(await extract(from: text, schema: schema))"
+			return "\(path)\t\(await extract(from: text, schema: schema, backend: backend, limiter: limiter))"
 		}
 		for line in lines { print(line) }
 		return
@@ -281,7 +297,7 @@ func run() async {
 			.filter { !$0.isEmpty }
 		guard !docs.isEmpty else { fail("No documents received on stdin.") }
 		let results = await mapConcurrent(docs, concurrency: concurrency) { doc in
-			await extract(from: doc, schema: schema)
+			await extract(from: doc, schema: schema, backend: backend, limiter: limiter)
 		}
 		for result in results { print(result) }
 		return
@@ -289,7 +305,7 @@ func run() async {
 
 	let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
 	guard !text.isEmpty else { fail("No OCR text received on stdin.") }
-	print(await extract(from: text, schema: schema))
+	print(await extract(from: text, schema: schema, backend: backend, limiter: limiter))
 }
 
 if #available(macOS 26.0, *) {

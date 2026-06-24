@@ -55,7 +55,7 @@ func warn(_ message: String) {
 // concurrency defaults are shared via MacAIKit.
 
 @available(macOS 26.0, *)
-func suggestName(for text: String) async -> String? {
+func suggestName(for text: String, backend: ModelBackend, limiter: RateLimiter) async -> String? {
 	let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 	guard !trimmed.isEmpty else { return nil }
 
@@ -67,7 +67,7 @@ func suggestName(for text: String) async -> String? {
 	// missing it. Decode of the ~30-token answer dominates latency, so the
 	// token cap is a safety ceiling, not a speed lever.
 	let clipped = String(trimmed.prefix(1000))
-	let session = LanguageModelSession(instructions: instructions)
+	let session = makeSession(instructions: instructions, backend: backend)
 
 	// Greedy is deterministic (same input → same name on reruns). A short
 	// English wrapper keeps the request in English — passing raw OCR text as the
@@ -81,6 +81,7 @@ func suggestName(for text: String) async -> String? {
 
 	let reply: String
 	do {
+		await limiter.waitForSlot()
 		reply = try await session.respond(to: prompt, options: options).content
 	} catch {
 		warn("model request failed: \(error)")
@@ -117,14 +118,17 @@ func suggestName(for text: String) async -> String? {
 
 @available(macOS 26.0, *)
 func run() async {
-	if let reason = systemModelUnavailableReason() { fail(reason) }
-
 	var batch = false
+	var cloud = false
 	var paths: [String] = []
 	for arg in CommandLine.arguments.dropFirst() {
 		switch arg {
 		case "--batch":
 			batch = true
+		case "--cloud":
+			cloud = true
+		case "--device":
+			cloud = false
 		case "-h", "--help":
 			print(
 				"""
@@ -132,6 +136,12 @@ func run() async {
 				  name-file                one document on stdin -> one name on stdout
 				  name-file FILE...        name each text file; prints "<file>\\t<name>" per line
 				  name-file --batch        NUL-separated documents on stdin -> one name per line
+
+				Model backend:
+				  --device                 use the on-device model (default)
+				  --cloud                  use Apple's Private Cloud Compute model (larger, 32k context)
+				  (or set MAC_AI_BACKEND=device|cloud)
+				  MAC_AI_CLOUD_RPM=N       throttle cloud requests to N per minute (default 15, 0 = off)
 				"""
 			)
 			exit(0)
@@ -140,8 +150,13 @@ func run() async {
 		}
 	}
 
+	let backend = ModelBackend.resolve(cloud: cloud)
+	if let reason = modelUnavailableReason(backend) { fail(reason) }
+	if let note = cloudQuotaWarning(backend) { warn(note) }
+	let limiter = makeRateLimiter(for: backend)
+
 	// Pay the model warmup once up front so the first document isn't slower.
-	let warm = LanguageModelSession(instructions: instructions)
+	let warm = makeSession(instructions: instructions, backend: backend)
 	warm.prewarm()
 
 	let concurrency = defaultConcurrency()
@@ -154,7 +169,7 @@ func run() async {
 				warn("cannot read \(path)")
 				return "\(path)\tuntitled-document"
 			}
-			return "\(path)\t\(await suggestName(for: text) ?? "untitled-document")"
+			return "\(path)\t\(await suggestName(for: text, backend: backend, limiter: limiter) ?? "untitled-document")"
 		}
 		for line in lines { print(line) }
 		return
@@ -169,7 +184,7 @@ func run() async {
 			.filter { !$0.isEmpty }
 		guard !docs.isEmpty else { fail("No documents received on stdin.") }
 		let names = await mapConcurrent(docs, concurrency: concurrency) { doc in
-			await suggestName(for: doc) ?? "untitled-document"
+			await suggestName(for: doc, backend: backend, limiter: limiter) ?? "untitled-document"
 		}
 		for name in names { print(name) }
 		return
@@ -178,7 +193,7 @@ func run() async {
 	// Single-document mode (default).
 	let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
 	guard !text.isEmpty else { fail("No OCR text received on stdin.") }
-	guard let name = await suggestName(for: text) else {
+	guard let name = await suggestName(for: text, backend: backend, limiter: limiter) else {
 		fail("could not generate a file name.")
 	}
 	print(name)

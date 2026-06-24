@@ -224,6 +224,34 @@ mac-ocr languages           # accurate recognizer
 mac-ocr languages --fast    # fast recognizer's set
 ```
 
+## AI tools: model backend
+
+The `name-file` and `extract-metadata` tools run on Apple's FoundationModels. Both
+support two backends, selected per run:
+
+| Backend | Flag | Model | Context | Entitlement |
+|---------|------|-------|---------|-------------|
+| On-device (default) | `--device` | `SystemLanguageModel.default` (Apple Intelligence) | ~4–8k | none |
+| Private Cloud Compute | `--cloud` | `PrivateCloudComputeLanguageModel` (larger server model) | ~32k | required (see below) |
+
+```sh
+mac-ocr doc.pdf | name-file              # on-device (default)
+mac-ocr doc.pdf | name-file --cloud      # Private Cloud Compute
+MAC_AI_BACKEND=cloud name-file doc.txt   # same, via env var
+```
+
+`--cloud` routes the same request to Apple's Private Cloud Compute — a much larger
+model with a 32k context window — while staying within Apple's privacy guarantees.
+Requires macOS 27 (Tahoe) or later.
+
+**Entitlement.** Private Cloud Compute requires the
+`com.apple.developer.private-cloud-compute` entitlement. An unsigned binary traps at
+runtime (`Process is missing required entitlement`). After building, code-sign the
+binary with [`docs/PrivateCloudCompute.entitlements`](PrivateCloudCompute.entitlements)
+and a provisioning profile whose App ID enables the Private Cloud Compute capability.
+The App Store Small Business Program (apps under 2M first-time downloads) grants free
+access. The on-device backend needs no entitlement and works from an unsigned build.
+
 ## Exit codes
 
 | Code | Meaning |

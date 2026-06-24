@@ -50,6 +50,7 @@ let package = Package(
 				"MacOcrCore",
 				"MacOcrCLI",
 				"mac-ocr",
+				"MacAIKit",
 			],
 			path: "Tests/mac-ocrTests"
 		),

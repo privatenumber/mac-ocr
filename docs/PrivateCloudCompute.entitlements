@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlement required to use the Private Cloud Compute (`--cloud`) backend.
+
+  The on-device backend needs no entitlement. The cloud backend calls
+  PrivateCloudComputeLanguageModel, which hard-requires this entitlement; an
+  unsigned binary traps at runtime ("Process is missing required entitlement").
+
+  After `swift build`, sign the binary with this file and a provisioning
+  profile whose App ID includes the Private Cloud Compute capability:
+
+    codesign --force --options runtime \
+      --entitlements docs/PrivateCloudCompute.entitlements \
+      --sign "Developer ID Application: <Your Name> (<TEAMID>)" \
+      .build/debug/name-file
+
+  Eligibility: the App Store Small Business Program (apps under 2M first-time
+  downloads) grants free Private Cloud Compute access. Enable the capability
+  for your App ID in the Apple Developer portal first.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.private-cloud-compute</key>
+	<true/>
+</dict>
+</plist>
