@@ -164,7 +164,7 @@ import Testing
 		let records = try jsonlObjects(at: debug)
 		#expect(records.count == 2)
 		#expect(records[0]["schema"] as? String == "mac-ocr.searchable-pdf.debug")
-		#expect(records[0]["schemaVersion"] as? Int == 3)
+		#expect(records[0]["schemaVersion"] as? Int == 2)
 		let firstOutput = try #require(records[0]["output"] as? [String: Any])
 		let secondOutput = try #require(records[1]["output"] as? [String: Any])
 		#expect(firstOutput["page"] as? Int == 1)

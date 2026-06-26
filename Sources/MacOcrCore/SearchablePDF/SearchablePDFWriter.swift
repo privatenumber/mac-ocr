@@ -409,7 +409,7 @@ public enum SearchablePDF {
 
 	private struct DebugPageRecord: Encodable {
 		let schema = "mac-ocr.searchable-pdf.debug"
-		let schemaVersion = 3
+		let schemaVersion = 2
 		let source: DebugSource
 		let output: DebugOutput
 		let geometry: DebugGeometry
