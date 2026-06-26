@@ -92,7 +92,11 @@ Pass `--merge` to combine multiple file/URL inputs into one searchable PDF. Merg
 
 Image inputs are sized from embedded DPI metadata when available. Images without usable DPI metadata fall back to 72 DPI (1px = 1pt).
 
-Searchable PDFs use `--ocr-strategy auto` by default: after full-page OCR, large pages with small detected text may get an additional partitioned OCR pass to recover text Vision misses in full-page context. Partitioning recursively splits regions along their longer axis until text is large enough or the region is below the calibrated size floor. Use `--ocr-strategy standard` to opt out, or `--ocr-strategy partitioned` to force the partitioned pass for eligible pages. Auto mode skips partitioning when `--roi` is set; forced `partitioned` mode cannot be combined with `--roi`.
+### Partitioned OCR
+
+Searchable PDFs use `--ocr-strategy auto` by default. Vision can miss small labels when it analyzes a full high-resolution page at once, even though the same text is readable in a tighter crop. Auto mode starts with full-page OCR, then runs a partitioned pass only for large pages with small or missing text: it recursively splits regions along their longer axis until text is large enough or the region is below the calibrated size floor.
+
+In dogfooding on a high-resolution five-page scan, partitioned OCR recovered small form labels the full-page pass missed while keeping the generated PDF around 7 MB. Large partitioned runs may take longer because Vision processes regions serially. Use `--ocr-strategy standard` to opt out, or `--ocr-strategy partitioned` to force the partitioned pass for eligible pages. Auto mode skips partitioning when `--roi` is set; forced `partitioned` mode cannot be combined with `--roi`.
 
 In non-merge mode, pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 
