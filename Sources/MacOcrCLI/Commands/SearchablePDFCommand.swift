@@ -111,12 +111,19 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		let pdfDpi = resolvedPdfDpi
 		let pdfPassword = resolvePdfPassword(recognition.password)
 
+		// One profile reporter spans the whole run (all inputs) so the final
+		// total covers the batch; it prints to stderr only.
+		let profile = profileEnabled ? ProfileReporter() : nil
+		defer { profile?.finish() }
+		let onProfile = profile.map { reporter in { (record: SearchablePDF.ProfileRecord) in reporter.record(record) } }
+
 		if merge {
 			try await runMerged(
 				sources: sources,
 				options: options,
 				pdfDpi: pdfDpi,
-				pdfPassword: pdfPassword
+				pdfPassword: pdfPassword,
+				onProfile: onProfile
 			)
 			return
 		}
@@ -133,6 +140,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				imageDownsampleDpi: imageDownsampleDpi,
 				ocrStrategy: ocrStrategy,
 				onWarning: { reporter.warning($0) },
+				onProfile: onProfile,
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -171,6 +179,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 					ocrStrategy: ocrStrategy,
 					debugOptions: debugOutput?.options,
 					onWarning: { reporter.warning($0) },
+					onProfile: onProfile,
 					onProgress: { reporter.update(done: $0, total: $1) }
 				)
 				// Atomic: a crash mid-write must not replace a previous good
@@ -193,7 +202,8 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 		sources: [ImageSource],
 		options: OCROptions,
 		pdfDpi: Int?,
-		pdfPassword: String?
+		pdfPassword: String?,
+		onProfile: ((SearchablePDF.ProfileRecord) -> Void)?
 	) async throws {
 		let outputPath = output == "-" ? nil : try resolvedMergeOutputPath()
 		let reporter = ProgressReporter(name: output == "-" ? "merged searchable PDF" : output ?? "merged searchable PDF")
@@ -209,6 +219,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 				imageDownsampleDpi: imageDownsampleDpi,
 				ocrStrategy: ocrStrategy,
 				onWarning: { reporter.warning($0) },
+				onProfile: onProfile,
 				onProgress: { reporter.update(done: $0, total: $1) }
 			)
 			FileHandle.standardOutput.write(data)
@@ -240,6 +251,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 			ocrStrategy: ocrStrategy,
 			debugOptions: debugOutput?.options,
 			onWarning: { reporter.warning($0) },
+			onProfile: onProfile,
 			onProgress: { reporter.update(done: $0, total: $1) }
 		)
 		try replaceFile(at: outputURL, with: tempURL)
@@ -257,7 +269,15 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	}
 
 	private var debugEnabled: Bool {
-		guard let value = ProcessInfo.processInfo.environment["MAC_OCR_DEBUG"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+		Self.envFlagEnabled("MAC_OCR_DEBUG")
+	}
+
+	private var profileEnabled: Bool {
+		Self.envFlagEnabled("MAC_OCR_PROFILE")
+	}
+
+	private static func envFlagEnabled(_ name: String) -> Bool {
+		guard let value = ProcessInfo.processInfo.environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines),
 			!value.isEmpty
 		else {
 			return false

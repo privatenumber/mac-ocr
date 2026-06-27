@@ -36,6 +36,24 @@ public enum SearchablePDF {
 		}
 	}
 
+	/// Per-page timing breakdown emitted when `MAC_OCR_PROFILE` is set, so the
+	/// dominant cost (full-page vs partitioned Vision passes, which run
+	/// serially) is visible without Instruments. Durations are wall-clock
+	/// seconds.
+	public struct ProfileRecord: Sendable {
+		public let source: String
+		public let page: Int
+		public let pageCount: Int
+		public let strategy: String
+		public let renderSeconds: Double
+		public let fullPageSeconds: Double
+		public let partitionSeconds: Double
+		public let partitionCount: Int
+		public let writeSeconds: Double
+		public let acceptedObservations: Int
+		public let rejectedObservations: Int
+	}
+
 	/// Render a single source into a searchable PDF and return its bytes.
 	///
 	/// `ocrAllPages` disables the born-digital skip: every PDF page is OCR'd,
@@ -65,6 +83,7 @@ public enum SearchablePDF {
 		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
 		onWarning: ((Warning) -> Void)? = nil,
+		onProfile: ((ProfileRecord) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		try validateImageQuality(imageQuality)
@@ -114,6 +133,11 @@ public enum SearchablePDF {
 						writer: debugWriter
 					)
 				}
+				if onProfile != nil {
+					for pageNumber in 1...pageCount {
+						onProfile?(skippedProfileRecord(source: source.displayName, page: pageNumber, pageCount: pageCount))
+					}
+				}
 				onProgress?(0, pageCount)
 				onProgress?(pageCount, pageCount)
 				return original
@@ -145,6 +169,7 @@ public enum SearchablePDF {
 				)
 			},
 			onWarning: onWarning,
+			onProfile: onProfile,
 			onProgress: onProgress
 		)
 
@@ -172,6 +197,7 @@ public enum SearchablePDF {
 		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
 		onWarning: ((Warning) -> Void)? = nil,
+		onProfile: ((ProfileRecord) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
 		let pdfData = NSMutableData()
@@ -197,6 +223,7 @@ public enum SearchablePDF {
 			into: context,
 			debugWriter: debugWriter,
 			onWarning: onWarning,
+			onProfile: onProfile,
 			onProgress: onProgress
 		)
 
@@ -221,6 +248,7 @@ public enum SearchablePDF {
 		ocrStrategy: OCRStrategy = .auto,
 		debugOptions: DebugOptions? = nil,
 		onWarning: ((Warning) -> Void)? = nil,
+		onProfile: ((ProfileRecord) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws {
 		guard let consumer = CGDataConsumer(url: outputURL as CFURL),
@@ -245,6 +273,7 @@ public enum SearchablePDF {
 			into: context,
 			debugWriter: debugWriter,
 			onWarning: onWarning,
+			onProfile: onProfile,
 			onProgress: onProgress
 		)
 
@@ -268,6 +297,7 @@ public enum SearchablePDF {
 		into context: CGContext,
 		debugWriter: DebugWriter?,
 		onWarning: ((Warning) -> Void)? = nil,
+		onProfile: ((ProfileRecord) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
 		try validateImageQuality(imageQuality)
@@ -319,6 +349,7 @@ public enum SearchablePDF {
 					)
 				},
 				onWarning: onWarning,
+				onProfile: onProfile,
 				onProgress: { done, _ in
 					if done > 0 {
 						onProgress?(completedBeforeSource + done, totalPages)
@@ -420,6 +451,23 @@ public enum SearchablePDF {
 	private struct RecognizedPage {
 		let ocr: OCRResult
 		let debug: DebugRecognizedPage
+		let timing: RecognizeTiming
+	}
+
+	/// Wall-clock split of OCR work for `MAC_OCR_PROFILE`. The full-page pass
+	/// always runs; the partitioned pass adds one Vision request per partition.
+	private struct RecognizeTiming {
+		let fullPageSeconds: Double
+		let partitionSeconds: Double
+		let partitionCount: Int
+
+		static let zero = RecognizeTiming(fullPageSeconds: 0, partitionSeconds: 0, partitionCount: 0)
+	}
+
+	/// Monotonic elapsed seconds. `DispatchTime` (uptime clock) avoids wall-clock
+	/// jumps and is available on the 10.15 deployment target, unlike `ContinuousClock`.
+	private static func elapsedSeconds(since start: DispatchTime) -> Double {
+		Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000_000
 	}
 
 	private struct DebugRecognizedPage {
@@ -865,6 +913,7 @@ public enum SearchablePDF {
 		ocrStrategy: OCRStrategy,
 		debugContext: DebugContext? = nil,
 		onWarning: ((Warning) -> Void)? = nil,
+		onProfile: ((ProfileRecord) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Int {
 		switch producer {
@@ -910,18 +959,22 @@ public enum SearchablePDF {
 			let renderDocument = reopen()
 			let fallbackColorSpace = CGColorSpaceCreateDeviceRGB()
 
-			func startRender(planIndex: Int) -> Task<Unchecked<CGImage>, Error>? {
+			// Carries the rasterized page plus the time spent rasterizing it, so
+			// profiling reports real render cost even when the work overlapped a
+			// prior page's OCR (the wait at consumption would otherwise read ~0).
+			func startRender(planIndex: Int) -> Task<Unchecked<(CGImage, Double)>, Error>? {
 				guard let renderDocument, plans[planIndex].needsOCR else { return nil }
 				let document = Unchecked(value: renderDocument)
 				let pageNumber = plans[planIndex].pageNumber
 				return Task.detached(priority: .userInitiated) {
-					Unchecked(
-						value: try renderPDFPage(
-							document: document.value,
-							pageIndex: pageNumber,
-							colorSpace: CGColorSpaceCreateDeviceRGB(),
-							requestedDpi: pdfDpi
-						))
+					let renderStart = DispatchTime.now()
+					let raster = try renderPDFPage(
+						document: document.value,
+						pageIndex: pageNumber,
+						colorSpace: CGColorSpaceCreateDeviceRGB(),
+						requestedDpi: pdfDpi
+					)
+					return Unchecked(value: (raster, elapsedSeconds(since: renderStart)))
 				}
 			}
 
@@ -941,20 +994,25 @@ public enum SearchablePDF {
 			for (index, plan) in plans.enumerated() {
 				let result: RecognizedPage
 				let ocrImage: DebugImageSize?
+				var renderSeconds = 0.0
 				if plan.needsOCR {
 					let raster: CGImage
 					if let task = prefetch, prefetchIndex == index {
-						raster = try await task.value.value
+						let rendered = try await task.value.value
+						raster = rendered.0
+						renderSeconds = rendered.1
 						// Start the next page's render so it overlaps this OCR.
 						prefetchIndex = nextOCRIndex(after: index)
 						prefetch = prefetchIndex.flatMap { startRender(planIndex: $0) }
 					} else {
+						let renderStart = DispatchTime.now()
 						raster = try renderPDFPage(
 							document: document,
 							pageIndex: plan.pageNumber,
 							colorSpace: fallbackColorSpace,
 							requestedDpi: pdfDpi
 						)
+						renderSeconds = elapsedSeconds(since: renderStart)
 					}
 					ocrImage = DebugImageSize(width: raster.width, height: raster.height)
 					result = try await recognize(raster, options: options, ocrStrategy: ocrStrategy, onWarning: onWarning)
@@ -963,6 +1021,7 @@ public enum SearchablePDF {
 					result = skippedPage(strategy: ocrStrategy, reason: "existing-text-layer")
 				}
 
+				let writeStart = DispatchTime.now()
 				writePage(
 					mediaBox: plan.displayBox,
 					ocr: result.ocr,
@@ -973,6 +1032,7 @@ public enum SearchablePDF {
 					context.concatenate(plan.drawingTransform)
 					context.drawPDFPage(plan.page)
 				}
+				let writeSeconds = elapsedSeconds(since: writeStart)
 				try debugContext?.writer.write(
 					debugRecord(
 						context: debugContext,
@@ -984,6 +1044,15 @@ public enum SearchablePDF {
 						mediaBox: plan.displayBox,
 						result: result
 					))
+				emitProfile(
+					onProfile,
+					source: displayName,
+					page: plan.pageNumber,
+					pageCount: pageCount,
+					result: result,
+					renderSeconds: renderSeconds,
+					writeSeconds: writeSeconds
+				)
 				onProgress?(index + 1, pageCount)
 			}
 			return pageCount
@@ -993,6 +1062,7 @@ public enum SearchablePDF {
 			let image = page.image
 			let mediaBox = page.mediaBox
 			let result = try await recognize(image, options: options, ocrStrategy: ocrStrategy, onWarning: onWarning)
+			let writeStart = DispatchTime.now()
 			writePage(
 				mediaBox: mediaBox,
 				ocr: result.ocr,
@@ -1006,6 +1076,7 @@ public enum SearchablePDF {
 					))
 				context.drawPDFPage(page.visiblePDFPage)
 			}
+			let writeSeconds = elapsedSeconds(since: writeStart)
 			try debugContext?.writer.write(
 				debugRecord(
 					context: debugContext,
@@ -1017,9 +1088,68 @@ public enum SearchablePDF {
 					mediaBox: mediaBox,
 					result: result
 				))
+			emitProfile(
+				onProfile,
+				source: displayName,
+				page: 1,
+				pageCount: 1,
+				result: result,
+				renderSeconds: 0,
+				writeSeconds: writeSeconds
+			)
 			onProgress?(1, 1)
 			return 1
 		}
+	}
+
+	/// A profile record for a born-digital page returned by the verbatim
+	/// pass-through, which never runs OCR. Emitting these keeps the run total's
+	/// page count honest for mixed batches.
+	private static func skippedProfileRecord(source: String, page: Int, pageCount: Int) -> ProfileRecord {
+		ProfileRecord(
+			source: source,
+			page: page,
+			pageCount: pageCount,
+			strategy: "skipped",
+			renderSeconds: 0,
+			fullPageSeconds: 0,
+			partitionSeconds: 0,
+			partitionCount: 0,
+			writeSeconds: 0,
+			acceptedObservations: 0,
+			rejectedObservations: 0
+		)
+	}
+
+	private static func emitProfile(
+		_ onProfile: ((ProfileRecord) -> Void)?,
+		source: String,
+		page: Int,
+		pageCount: Int,
+		result: RecognizedPage,
+		renderSeconds: Double,
+		writeSeconds: Double
+	) {
+		guard let onProfile else { return }
+		let accepted = result.debug.observations.reduce(into: 0) { count, observation in
+			if observation.status.isAccepted {
+				count += 1
+			}
+		}
+		onProfile(
+			ProfileRecord(
+				source: source,
+				page: page,
+				pageCount: pageCount,
+				strategy: result.debug.recognition.effectiveStrategy,
+				renderSeconds: renderSeconds,
+				fullPageSeconds: result.timing.fullPageSeconds,
+				partitionSeconds: result.timing.partitionSeconds,
+				partitionCount: result.timing.partitionCount,
+				writeSeconds: writeSeconds,
+				acceptedObservations: accepted,
+				rejectedObservations: result.debug.observations.count - accepted
+			))
 	}
 
 	private static func resolveProducer(
@@ -1459,7 +1589,9 @@ public enum SearchablePDF {
 			options.includeWordGeometry = true
 			return options
 		}()
+		let fullStart = DispatchTime.now()
 		let full = try await recognize(image, options: wordOptions, source: ObservationSource(pass: "full"))
+		let fullPageSeconds = elapsedSeconds(since: fullStart)
 		let decision = partitionDecision(strategy: ocrStrategy, image: image, fullResult: full, options: wordOptions)
 		let fullDebugObservations = full.observations.enumerated().map { index, observation in
 			DebugOCRObservation(id: index + 1, partitionId: nil, observation: observation, status: .accepted)
@@ -1474,7 +1606,8 @@ public enum SearchablePDF {
 			)
 			return RecognizedPage(
 				ocr: full,
-				debug: DebugRecognizedPage(recognition: recognition, observations: fullDebugObservations)
+				debug: DebugRecognizedPage(recognition: recognition, observations: fullDebugObservations),
+				timing: RecognizeTiming(fullPageSeconds: fullPageSeconds, partitionSeconds: 0, partitionCount: 0)
 			)
 		}
 		if estimatedPartitionPasses(image: image, limit: partitionWarningEstimatedPasses) >= partitionWarningEstimatedPasses {
@@ -1485,7 +1618,8 @@ public enum SearchablePDF {
 			options: wordOptions,
 			fullResult: full,
 			fullDebugObservations: fullDebugObservations,
-			decision: decision
+			decision: decision,
+			fullPageSeconds: fullPageSeconds
 		)
 	}
 
@@ -1502,8 +1636,10 @@ public enum SearchablePDF {
 		options: OCROptions,
 		fullResult: OCRResult,
 		fullDebugObservations: [DebugOCRObservation],
-		decision: PartitionDecision
+		decision: PartitionDecision,
+		fullPageSeconds: Double
 	) async throws -> RecognizedPage {
+		let partitionStart = DispatchTime.now()
 		var acceptedObservations = fullDebugObservations
 		var debugObservations = fullDebugObservations
 		var queue = split(Partition(box: BoundingBox(x: 0, y: 0, width: 1, height: 1), depth: 0), image: image)
@@ -1576,7 +1712,12 @@ public enum SearchablePDF {
 		)
 		return RecognizedPage(
 			ocr: OCRResult(text: sorted.map(\.text).joined(separator: "\n"), observations: sorted),
-			debug: DebugRecognizedPage(recognition: recognition, observations: debugObservations)
+			debug: DebugRecognizedPage(recognition: recognition, observations: debugObservations),
+			timing: RecognizeTiming(
+				fullPageSeconds: fullPageSeconds,
+				partitionSeconds: elapsedSeconds(since: partitionStart),
+				partitionCount: partitionCount
+			)
 		)
 	}
 
@@ -1688,7 +1829,8 @@ public enum SearchablePDF {
 		)
 		return RecognizedPage(
 			ocr: OCRResult(text: "", observations: []),
-			debug: DebugRecognizedPage(recognition: recognition, observations: [])
+			debug: DebugRecognizedPage(recognition: recognition, observations: []),
+			timing: .zero
 		)
 	}
 

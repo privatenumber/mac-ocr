@@ -215,6 +215,68 @@ import Testing
 		#expect(try jsonlObjects(at: directory + "/document-photo.ocr.jsonl").count == 1)
 	}
 
+	@Test func profileModeWritesTimingToStderr() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = try stage("hello.png", in: directory)
+		let output = directory + "/profiled.pdf"
+
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", output, input],
+			environment: ["MAC_OCR_PROFILE": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		// Per-page line plus a run total, on stderr only.
+		#expect(result.stderr.contains("mac-ocr profile"))
+		#expect(result.stderr.contains("full="))
+		#expect(result.stderr.contains("mac-ocr profile  TOTAL  pages=1"))
+		// The PDF is still written normally; profiling never touches the artifact.
+		#expect(try #require(PDFDocument(url: URL(fileURLWithPath: output))).pageCount == 1)
+	}
+
+	@Test func profileModeIsOffWithoutEnv() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = try stage("hello.png", in: directory)
+
+		let result = try TestSupport.run(["searchable-pdf", "-o", directory + "/out.pdf", input])
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(!result.stderr.contains("mac-ocr profile"))
+	}
+
+	@Test func profileModeCountsBornDigitalPassThroughPages() throws {
+		// A fully born-digital PDF is copied through verbatim (no OCR), but it
+		// must still appear in the profile total so batch page counts are honest.
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = directory + "/born-digital.pdf"
+		try makeBornDigitalPDF().write(to: URL(fileURLWithPath: input))
+
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", directory + "/out.pdf", input],
+			environment: ["MAC_OCR_PROFILE": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(result.stderr.contains("skipped"))
+		#expect(result.stderr.contains("mac-ocr profile  TOTAL  pages=1"))
+	}
+
+	@Test func profileModeStreamsToStdoutWithCleanPipe() throws {
+		// Unlike MAC_OCR_DEBUG, profiling writes to stderr only, so -o - is allowed
+		// and the piped PDF bytes stay clean.
+		let result = try TestSupport.run(
+			["searchable-pdf", "-o", "-", TestSupport.fixturePath("hello.png")],
+			environment: ["MAC_OCR_PROFILE": "1"]
+		)
+
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(result.stdoutData.prefix(5) == Data("%PDF-".utf8))
+		#expect(result.stderr.contains("mac-ocr profile"))
+	}
+
 	@Test func debugPartitionedRecordsRejectedObservationsWithReasons() throws {
 		let directory = makeTempDir()
 		defer { try? FileManager.default.removeItem(atPath: directory) }
