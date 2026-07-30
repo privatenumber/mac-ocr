@@ -179,7 +179,7 @@ Options mirror the CLI flags (like `{ fast: true }` above), plus an `AbortSignal
 
 ## How it works
 
-`mac-ocr` is a native Swift binary built on Apple's Vision framework (`VNRecognizeTextRequest`). Recognition happens entirely on-device — nothing is uploaded. The searchable-PDF layer is invisible text drawn with Core Graphics + Core Text, placed word by word where Vision found each word.
+`mac-ocr` is a native Swift binary built on Apple's Vision framework (`VNRecognizeTextRequest`). Recognition happens entirely on-device — nothing is uploaded. The Node API reuses one hidden native service for ordinary `ocr()` calls instead of launching a new binary each time; Vision execution remains serial inside that process. The searchable-PDF layer is invisible text drawn with Core Graphics + Core Text, placed word by word where Vision found each word.
 
 ## Agent Skills
 

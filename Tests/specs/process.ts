@@ -12,4 +12,11 @@ describe('process', () => {
 		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
 		expect((error as MacOcrError).kind).toBe('spawn');
 	});
+
+	test('rejects cleanly when the service binary cannot spawn', async () => {
+		await using wrapper = await importWrapper(undefined, { service: true });
+		const error = await wrapper.api.ocr(Buffer.from('dummy')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect((error as MacOcrError).kind).toBe('spawn');
+	});
 });

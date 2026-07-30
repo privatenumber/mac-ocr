@@ -3,10 +3,10 @@ import { ocr, createSearchablePdf } from '../../src/index.ts';
 import { fixtureData } from '../utils.ts';
 
 /**
- * The realistic production pattern: a `Promise.all` burst over many inputs.
- * Every call spawns its own subprocess, so this exercises N simultaneous
- * Vision processes (ANE contention) end to end. Stress-audited at 16-way
- * parallelism with a 24 MP input; kept at 8 mixed calls here for CI time.
+ * A realistic mixed `Promise.all` burst: ordinary OCR calls share the serial
+ * native service, while page streaming and searchable-PDF retain dedicated
+ * subprocesses. This verifies the service and one-shot paths compose without
+ * corrupting results or process lifecycle.
  */
 await describe('concurrency', async () => {
 	await test('a parallel burst of mixed calls all resolve correctly', async () => {

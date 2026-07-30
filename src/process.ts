@@ -8,9 +8,9 @@ import type { Input } from './types.ts';
  * `pnpm test:node` copies a debug build to `bin/mac-ocr` (gitignored;
  * `prepack` always rebuilds the universal release binary before publish).
  */
-const binaryPath = fileURLToPath(new URL('../bin/mac-ocr', import.meta.url));
+export const binaryPath = fileURLToPath(new URL('../bin/mac-ocr', import.meta.url));
 
-const toBuffer = (input: Input): Buffer => {
+export const toBuffer = (input: Input): Buffer => {
 	if (Buffer.isBuffer(input)) {
 		return input;
 	}

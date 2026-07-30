@@ -1,7 +1,12 @@
 import { createInterface } from 'node:readline';
 import { buildArgs } from './args.ts';
 import { MacOcrError } from './errors.ts';
-import { spawnBinary, waitForExit, type Spawned } from './process.ts';
+import {
+	spawnBinary,
+	waitForExit,
+	type Spawned,
+} from './process.ts';
+import { ocrWithService, shouldUseService } from './service.ts';
 import type { Input, OcrOptions, OcrResult } from './types.ts';
 
 const label = 'mac-ocr ocr';
@@ -39,7 +44,7 @@ const spawnOcr = (input: Input, options?: OcrOptions): Spawned => spawnBinary(
 );
 
 /** OCR a single image or single-page PDF. Throws if the input has multiple pages. */
-const ocrSingle = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
+const ocrSingleProcess = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
 	const spawned = spawnOcr(input, options);
 	let first: OcrResult | undefined;
 
@@ -78,6 +83,12 @@ const ocrSingle = async (input: Input, options?: OcrOptions): Promise<OcrResult>
 	}
 	return first;
 };
+
+const ocrSingle = (input: Input, options?: OcrOptions): Promise<OcrResult> => (
+	shouldUseService(options)
+		? ocrWithService(input, options)
+		: ocrSingleProcess(input, options)
+);
 
 /**
  * Result of `ocr.pages()`: iterate it to stream pages as they finish, or

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createFixture } from 'fs-fixture';
 import type * as WrapperApiModule from '../src/index.ts';
+import type * as ServiceModule from '../src/service.ts';
 
 export const fixturePath = (name: string): string => fileURLToPath(
 	new URL(`fixtures/${name}`, import.meta.url),
@@ -12,6 +13,7 @@ export const fixtureData = (name: string): Buffer => fs.readFileSync(fixturePath
 const sourceDirectory = fileURLToPath(new URL('../src', import.meta.url));
 
 type WrapperApi = typeof WrapperApiModule;
+type ServiceApi = typeof ServiceModule;
 
 /**
  * Import a private copy of the wrapper whose `bin/mac-ocr` is the given shim
@@ -26,7 +28,10 @@ type WrapperApi = typeof WrapperApiModule;
  * returned `api` for `instanceof` checks (`api.MacOcrError`), not the classes
  * imported from the real `src/`.
  */
-export const importWrapper = async (shim?: string) => {
+export const importWrapper = async (
+	shim?: string,
+	options: { service?: boolean } = {},
+) => {
 	const fixture = await createFixture(
 		shim === undefined ? {} : { 'bin/mac-ocr': shim },
 	);
@@ -34,11 +39,16 @@ export const importWrapper = async (shim?: string) => {
 	if (shim !== undefined) {
 		await fs.promises.chmod(fixture.getPath('bin/mac-ocr'), 0o755);
 	}
-	const api = await import(
-		pathToFileURL(fixture.getPath('src/index.ts')).href,
-	) as WrapperApi;
+	const [api, serviceApi] = await Promise.all([
+		import(pathToFileURL(fixture.getPath('src/index.ts')).href) as Promise<WrapperApi>,
+		import(pathToFileURL(fixture.getPath('src/service.ts')).href) as Promise<ServiceApi>,
+	]);
+	if (!options.service) {
+		serviceApi.disableServiceForTesting();
+	}
 	return {
 		api,
+		serviceApi,
 
 		/** Unique per call — usable as a `pgrep -f` pattern for shim processes. */
 		binaryPath: fixture.getPath('bin/mac-ocr'),

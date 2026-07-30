@@ -124,7 +124,7 @@ mac-ocr languages --fast    # fast recognizer's set
 
 ## Node.js API
 
-The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) that spawns the binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
+The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code. Ordinary unsignaled `ocr()` calls reuse one hidden native service per Node process; signaled calls and streaming/artifact APIs retain one-shot subprocesses.
 
 ```ts
 const { text, observations } = await ocr(bytes)          // single image or single-page PDF

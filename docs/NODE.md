@@ -1,6 +1,6 @@
 # Node.js API
 
-`mac-ocr` ships a typed, promise-based API that spawns the bundled CLI binary (no native addon). macOS only; ESM only (Node ≥ 22).
+`mac-ocr` ships a typed, promise-based API backed by the bundled native binary (no native addon). macOS only; ESM only (Node ≥ 22).
 
 ```sh
 npm install mac-ocr
@@ -12,7 +12,7 @@ import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
 
 ## Input
 
-Every function takes image or PDF **bytes** — a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, …). Read files or fetch URLs in your own code and pass the bytes; the API does no file/URL I/O itself. A non-bytes input throws a `TypeError`.
+Every function takes image or PDF **bytes** — a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, …). Read files or fetch URLs in your own code and pass the bytes; paths and URLs are not accepted as API inputs. A non-bytes input throws a `TypeError`.
 
 ```ts
 import fs from 'node:fs/promises'
@@ -173,6 +173,14 @@ const controller = new AbortController()
 setTimeout(() => controller.abort(), 5_000)
 await ocr(bytes, { signal: controller.signal })   // rejects with MacOcrError, kind 'abort'
 ```
+
+## Process reuse
+
+Ordinary `ocr()` calls without an `AbortSignal` share one lazily started native service within the current Node process. Requests retain independent Promises and errors while Swift executes Vision work serially. The service is unreferenced while idle, so it does not keep Node alive; a crashed service rejects pending work and the next call starts a fresh process.
+
+Calls with an `AbortSignal` retain the dedicated one-shot subprocess path so aborting one call cannot affect unrelated service requests. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` also retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
+
+Input bytes are staged in private temporary files before service requests. This avoids repeatedly transferring large images through macOS pipes and lets the service reuse one native process. Node removes the private directory after each response.
 
 ## Tree-shaking
 
