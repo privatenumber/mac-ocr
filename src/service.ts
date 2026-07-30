@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { isMainThread } from 'node:worker_threads';
 import { buildArgs } from './args.ts';
 import { MacOcrError, type MacOcrErrorKind } from './errors.ts';
 import { binaryPath, toBuffer } from './process.ts';
@@ -420,7 +421,11 @@ const removeInput = async (inputPath: string, suppressError: boolean): Promise<v
 	}
 };
 
-const runQueuedOcr = async (buffer: Buffer, options?: OcrOptions): Promise<OcrResult> => {
+const runQueuedOcr = async (
+	buffer: Buffer,
+	arguments_: string[],
+	password?: string,
+): Promise<OcrResult> => {
 	let inputPath: string | undefined;
 	let primaryError: unknown;
 	try {
@@ -435,8 +440,6 @@ const runQueuedOcr = async (buffer: Buffer, options?: OcrOptions): Promise<OcrRe
 		} catch (error) {
 			throw serviceInputFailure(error);
 		}
-		const arguments_ = buildArgs(options);
-		const password = options?.password || process.env.MAC_OCR_PDF_PASSWORD;
 		return await service.request(inputName, arguments_, password);
 	} catch (error) {
 		primaryError = error;
@@ -450,19 +453,21 @@ const runQueuedOcr = async (buffer: Buffer, options?: OcrOptions): Promise<OcrRe
 
 export const ocrWithService = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
 	const buffer = toBuffer(input);
+	const arguments_ = buildArgs(options);
+	const password = options?.password || process.env.MAC_OCR_PDF_PASSWORD;
 	const generation = queuedRequestGeneration;
 	const request = serviceRequestQueue.then(() => {
 		if (generation !== queuedRequestGeneration) {
 			throw queuedRequestFailure;
 		}
-		return runQueuedOcr(buffer, options);
+		return runQueuedOcr(buffer, arguments_, password);
 	});
 	serviceRequestQueue = request.then(settleQueuedRequest, settleQueuedRequest);
 	return request;
 };
 
 export const shouldUseService = (options?: OcrOptions): boolean => (
-	serviceEnabled && !options?.signal
+	serviceEnabled && isMainThread && !options?.signal
 );
 
 export const stopService = (): void => {

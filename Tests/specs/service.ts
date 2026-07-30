@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { Worker } from 'node:worker_threads';
 import { describe, expect, test } from 'manten';
 import { ocr } from '../../src/index.ts';
 import {
@@ -136,16 +138,22 @@ setTimeout(() => {}, 30_000)
 	await test('reads the ambient PDF password for each request', async () => {
 		const previous = process.env.MAC_OCR_PDF_PASSWORD;
 		process.env.MAC_OCR_PDF_PASSWORD = 'secret';
-		try {
-			const result = await ocr(fixtureData('encrypted.pdf'));
-			expect(result.text).toContain('Hello World');
-		} finally {
-			if (previous === undefined) {
-				delete process.env.MAC_OCR_PDF_PASSWORD;
-			} else {
-				process.env.MAC_OCR_PDF_PASSWORD = previous;
-			}
+		const resultPromise = ocr(fixtureData('encrypted.pdf'));
+		if (previous === undefined) {
+			delete process.env.MAC_OCR_PDF_PASSWORD;
+		} else {
+			process.env.MAC_OCR_PDF_PASSWORD = previous;
 		}
+		const result = await resultPromise;
+		expect(result.text).toContain('Hello World');
+	});
+
+	await test('snapshots mutable options before queueing', async () => {
+		const options = { languages: ['en-US'] };
+		const resultPromise = ocr(fixtureData('hello.png'), options);
+		options.languages = ['klingon'];
+		const result = await resultPromise;
+		expect(result.text).toContain('Hello World');
 	});
 
 	await test('keeps AbortSignal calls on the one-shot path', async () => {
@@ -262,5 +270,28 @@ process.exit(0)
 			},
 			'Expected the orphaned service directory to be removed',
 		);
+	});
+
+	await test('keeps worker-thread calls on the one-shot path', async () => {
+		const indexUrl = pathToFileURL(new URL('../../src/index.ts', import.meta.url).pathname).href;
+		const serviceUrl = pathToFileURL(new URL('../../src/service.ts', import.meta.url).pathname).href;
+		const fixtureUrl = pathToFileURL(new URL('../fixtures/hello.png', import.meta.url).pathname).href;
+		const source = `
+import fs from 'node:fs/promises'
+import { parentPort } from 'node:worker_threads'
+import { ocr } from ${JSON.stringify(indexUrl)}
+import { servicePidForTesting } from ${JSON.stringify(serviceUrl)}
+const result = await ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
+parentPort.postMessage([result.text.includes('Hello World'), servicePidForTesting() ?? null])
+`;
+		const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(source)}`));
+		const message = once(worker, 'message');
+		const exit = once(worker, 'exit');
+		try {
+			expect(await message).toStrictEqual([[true, null]]);
+			expect(await exit).toStrictEqual([0]);
+		} finally {
+			await worker.terminate();
+		}
 	});
 });

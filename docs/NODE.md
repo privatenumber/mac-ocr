@@ -176,9 +176,9 @@ await ocr(bytes, { signal: controller.signal })   // rejects with MacOcrError, k
 
 ## Process reuse
 
-Ordinary `ocr()` calls without an `AbortSignal` share one lazily started native service within the current Node process. Requests retain independent Promises and errors while Swift executes Vision work serially. The service is unreferenced while idle, so it does not keep Node alive; a crashed service rejects pending work and the next call starts a fresh process.
+Ordinary main-thread `ocr()` calls without an `AbortSignal` share one lazily started native service within the current Node process. Requests retain independent Promises and errors while Swift executes Vision work serially. The service is unreferenced while idle, so it does not keep Node alive; a crashed service rejects pending work and the next call starts a fresh process.
 
-Calls with an `AbortSignal` retain the dedicated one-shot subprocess path so aborting one call cannot affect unrelated service requests. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` also retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
+Calls with an `AbortSignal` retain the dedicated one-shot subprocess path so aborting one call cannot affect unrelated service requests. Worker-thread calls also stay one-shot so a native child cannot outlive the worker that launched it. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
 
 Input bytes are staged in private temporary files before service requests. This avoids repeatedly transferring large images through macOS pipes and lets the service reuse one native process. Node removes the private directory after each response.
 
