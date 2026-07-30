@@ -52,7 +52,7 @@ private struct ServiceResponse: Encodable {
 private struct ActiveServiceRequest {
 	let id: UInt32
 	let cancellation: OCRCancellation
-	let task: Task<Void, Error>
+	let task: Task<Void, Never>
 }
 
 private func readServiceData(count: Int) throws -> Data? {
@@ -279,6 +279,12 @@ private func processServiceRequest(
 	try writeServiceFrame(response)
 }
 
+private func terminateService(_ error: Error) -> Never {
+	let message = "Error: mac-ocr service failed: \(error.localizedDescription)\n"
+	FileHandle.standardError.write(Data(message.utf8))
+	Darwin.exit(1)
+}
+
 public enum OCRService {
 	public static let protocolVersion = 1
 
@@ -317,15 +323,19 @@ public enum OCRService {
 				}
 			case "ocr":
 				if let activeRequest {
-					try await activeRequest.task.value
+					await activeRequest.task.value
 				}
 				let cancellation = OCRCancellation()
 				let task = Task {
-					try await processServiceRequest(
-						request: request,
-						inputDirectory: inputDirectory,
-						cancellation: cancellation
-					)
+					do {
+						try await processServiceRequest(
+							request: request,
+							inputDirectory: inputDirectory,
+							cancellation: cancellation
+						)
+					} catch {
+						terminateService(error)
+					}
 				}
 				activeRequest = ActiveServiceRequest(
 					id: request.id,
@@ -339,7 +349,7 @@ public enum OCRService {
 		if let activeRequest {
 			activeRequest.cancellation.cancel()
 			activeRequest.task.cancel()
-			try await activeRequest.task.value
+			await activeRequest.task.value
 		}
 	}
 }

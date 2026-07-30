@@ -302,7 +302,7 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 			kind: response.error.kind,
 			code: response.error.code,
 			exitCode: response.error.exitCode,
-			stderr: response.error.stderr || stderrText(),
+			stderr: response.error.stderr,
 		}));
 	};
 	const handleFrame = (frame: Buffer): void => {
@@ -495,15 +495,25 @@ const runQueuedOcr = async (
 	let inputPath: string | undefined;
 	let primaryError: unknown;
 	try {
+		if (signal?.aborted) {
+			throw serviceAbortFailure();
+		}
 		const service = await ensureServiceIsRunning();
+		if (signal?.aborted) {
+			throw serviceAbortFailure();
+		}
 		const inputName = crypto.randomUUID();
 		inputPath = path.join(service.inputDirectory, inputName);
 		try {
 			await fs.writeFile(inputPath, buffer, {
 				flag: 'wx',
 				mode: 0o600,
+				signal,
 			});
 		} catch (error) {
+			if (signal?.aborted) {
+				throw serviceAbortFailure();
+			}
 			throw serviceInputFailure(error);
 		}
 		return await service.request(inputName, arguments_, password, signal);
@@ -582,13 +592,14 @@ const startServiceQueue = (): void => {
 };
 
 export const ocrWithService = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
-	const buffer = Buffer.from(toBuffer(input));
+	const inputBuffer = toBuffer(input);
 	const arguments_ = buildArgs(options);
 	const password = options?.password || process.env.MAC_OCR_PDF_PASSWORD;
 	const signal = options?.signal;
 	if (signal?.aborted) {
 		throw serviceAbortFailure();
 	}
+	const buffer = Buffer.from(inputBuffer);
 	const { promise, resolve, reject } = Promise.withResolvers<OcrResult>();
 	const request: QueuedOcrRequest = {
 		buffer,
