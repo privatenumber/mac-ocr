@@ -279,6 +279,10 @@ public enum OCRService {
 
 	public static func run() async throws {
 		cleanStaleServiceInputDirectories()
+		Task.detached(priority: .background) {
+			try? await Task.sleep(nanoseconds: 1_000_000_000)
+			cleanStaleServiceInputDirectories()
+		}
 		let inputDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
 			.appendingPathComponent(
 				"\(serviceInputDirectoryPrefix)\(getpid())-\(UUID().uuidString)",
