@@ -36,9 +36,12 @@ type NativeError = {
 
 type NativeResponse = {
 	id: number;
-	type: 'result' | 'error';
-	result?: OcrResult;
-	error?: NativeError;
+	type: 'result';
+	result: OcrResult;
+} | {
+	id: number;
+	type: 'error';
+	error: NativeError;
 };
 
 type PendingRequest = {
@@ -60,6 +63,16 @@ let servicePromise: Promise<Service> | undefined;
 let activeService: Service | undefined;
 let stopStartingService: (() => void) | undefined;
 let startingServicePid: number | undefined;
+let queuedRequestGeneration = 0;
+let queuedRequestFailure: unknown;
+let serviceRequestQueue: Promise<void> = Promise.resolve();
+
+const settleQueuedRequest = (): void => {};
+
+const invalidateQueuedRequests = (error: unknown): void => {
+	queuedRequestGeneration += 1;
+	queuedRequestFailure = error;
+};
 
 const encodeFrame = (value: unknown): Buffer => {
 	const payload = Buffer.from(JSON.stringify(value), 'utf8');
@@ -94,6 +107,69 @@ const isServiceInputDirectory = (directory: string): boolean => (
 	path.dirname(directory) === os.tmpdir()
 	&& serviceDirectoryPattern.test(path.basename(directory))
 );
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+	typeof value === 'object'
+	&& value !== null
+	&& !Array.isArray(value)
+);
+
+const isNativeHello = (value: unknown): value is NativeHello => (
+	isRecord(value)
+	&& value.type === 'hello'
+	&& value.protocolVersion === protocolVersion
+	&& typeof value.binaryVersion === 'string'
+	&& typeof value.inputDirectory === 'string'
+	&& isServiceInputDirectory(value.inputDirectory)
+);
+
+const isNativeError = (value: unknown): value is NativeError => (
+	isRecord(value)
+	&& (
+		value.kind === 'usage'
+		|| value.kind === 'unavailable'
+		|| value.kind === 'runtime'
+		|| value.kind === 'internal'
+	)
+	&& (value.code === undefined || typeof value.code === 'string')
+	&& typeof value.message === 'string'
+	&& (
+		value.exitCode === undefined
+		|| value.exitCode === null
+		|| (typeof value.exitCode === 'number' && Number.isInteger(value.exitCode))
+	)
+	&& typeof value.stderr === 'string'
+);
+
+const isOcrResult = (value: unknown): value is OcrResult => (
+	isRecord(value)
+	&& typeof value.page === 'number'
+	&& Number.isInteger(value.page)
+	&& typeof value.pageCount === 'number'
+	&& Number.isInteger(value.pageCount)
+	&& typeof value.width === 'number'
+	&& Number.isInteger(value.width)
+	&& typeof value.height === 'number'
+	&& Number.isInteger(value.height)
+	&& typeof value.text === 'string'
+	&& Array.isArray(value.observations)
+);
+
+const isNativeResponse = (value: unknown): value is NativeResponse => {
+	if (
+		!isRecord(value)
+		|| typeof value.id !== 'number'
+		|| !Number.isInteger(value.id)
+		|| value.id < 0
+		|| value.id > 4_294_967_295
+	) {
+		return false;
+	}
+	return (
+		(value.type === 'result' && isOcrResult(value.result))
+		|| (value.type === 'error' && isNativeError(value.error))
+	);
+};
 
 const startService = (generation: number): Promise<Service> => new Promise((_resolve, _reject) => {
 	const subprocess = childProcess.spawn(binaryPath, [`--service=${protocolVersion}`], {
@@ -145,6 +221,7 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 		const failure = didFailToSpawn
 			? serviceSpawnFailure(error, stderrText())
 			: serviceFailure('mac-ocr service stopped', stderrText(), error);
+		invalidateQueuedRequests(failure);
 		rejectPending(failure);
 		if (!ready) {
 			_reject(failure);
@@ -161,14 +238,6 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 		subprocess.kill();
 	};
 	const handleHello = (hello: NativeHello): void => {
-		if (
-			hello.type !== 'hello'
-			|| hello.protocolVersion !== protocolVersion
-			|| !isServiceInputDirectory(hello.inputDirectory)
-		) {
-			failProtocol('mac-ocr service protocol version mismatch');
-			return;
-		}
 		ready = true;
 		service.inputDirectory = hello.inputDirectory;
 		if (generation === serviceGeneration) {
@@ -190,34 +259,38 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 		}
 		pending.delete(response.id);
 		unref();
-		if (response.type === 'result' && response.result) {
+		if (response.type === 'result') {
 			request.resolve(response.result);
 			return;
 		}
-		if (response.type === 'error' && response.error) {
-			request.reject(new MacOcrError(response.error.message, {
-				kind: response.error.kind,
-				code: response.error.code,
-				exitCode: response.error.exitCode,
-				stderr: response.error.stderr || stderrText(),
-			}));
-			return;
-		}
-		request.reject(serviceFailure('mac-ocr service returned an invalid response', stderrText()));
+		request.reject(new MacOcrError(response.error.message, {
+			kind: response.error.kind,
+			code: response.error.code,
+			exitCode: response.error.exitCode,
+			stderr: response.error.stderr || stderrText(),
+		}));
 	};
 	const handleFrame = (frame: Buffer): void => {
-		let value: NativeHello | NativeResponse;
+		let value: unknown;
 		try {
-			value = JSON.parse(frame.toString('utf8')) as NativeHello | NativeResponse;
+			value = JSON.parse(frame.toString('utf8')) as unknown;
 		} catch (error) {
 			failProtocol(`mac-ocr service produced invalid JSON: ${error}`);
 			return;
 		}
 		if (!ready) {
-			handleHello(value as NativeHello);
+			if (!isNativeHello(value)) {
+				failProtocol('mac-ocr service produced an invalid hello frame');
+				return;
+			}
+			handleHello(value);
 			return;
 		}
-		handleResponse(value as NativeResponse);
+		if (!isNativeResponse(value)) {
+			failProtocol('mac-ocr service produced an invalid response frame');
+			return;
+		}
+		handleResponse(value);
 	};
 	const readStdout = (chunk: Buffer): void => {
 		const required = stdoutUsed + chunk.byteLength;
@@ -347,8 +420,7 @@ const removeInput = async (inputPath: string, suppressError: boolean): Promise<v
 	}
 };
 
-export const ocrWithService = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
-	const buffer = toBuffer(input);
+const runQueuedOcr = async (buffer: Buffer, options?: OcrOptions): Promise<OcrResult> => {
 	let inputPath: string | undefined;
 	let primaryError: unknown;
 	try {
@@ -376,11 +448,25 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 	}
 };
 
+export const ocrWithService = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
+	const buffer = toBuffer(input);
+	const generation = queuedRequestGeneration;
+	const request = serviceRequestQueue.then(() => {
+		if (generation !== queuedRequestGeneration) {
+			throw queuedRequestFailure;
+		}
+		return runQueuedOcr(buffer, options);
+	});
+	serviceRequestQueue = request.then(settleQueuedRequest, settleQueuedRequest);
+	return request;
+};
+
 export const shouldUseService = (options?: OcrOptions): boolean => (
 	serviceEnabled && !options?.signal
 );
 
 export const stopService = (): void => {
+	invalidateQueuedRequests(serviceFailure('mac-ocr service stopped', ''));
 	serviceGeneration += 1;
 	stopStartingService?.();
 	stopStartingService = undefined;

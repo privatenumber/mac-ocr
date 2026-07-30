@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, test } from 'manten';
@@ -72,12 +73,39 @@ await describe('ocr service', async () => {
 
 	await test('serializes concurrent calls through the same service', async () => {
 		const pid = servicePidForTesting();
-		const results = await Promise.all(Array.from(
+		const pending = Array.from(
 			{ length: 8 },
 			() => ocr(fixtureData('hello.png')),
-		));
+		);
+		await waitFor(
+			() => pendingServiceRequestsForTesting() > 0,
+			'Expected a pending service request',
+		);
+		const directories = await serviceDirectories();
+		const directory = directories.find(
+			name => name.startsWith(`mac-ocr-service-${pid}-`),
+		);
+		if (!directory) {
+			throw new Error('Expected a service input directory');
+		}
+		const stagedInputs = await fs.readdir(path.join(os.tmpdir(), directory));
+		expect(stagedInputs.length).toBeLessThanOrEqual(1);
+		const results = await Promise.all(pending);
 		expect(results.every(result => result.text.includes('Hello World'))).toBe(true);
 		expect(servicePidForTesting()).toBe(pid);
+	});
+
+	await test('rejects malformed protocol frames instead of crashing', async () => {
+		await using wrapper = await importWrapper(`#!/usr/bin/env node
+const payload = Buffer.from('null')
+const header = Buffer.alloc(4)
+header.writeUInt32LE(payload.length)
+process.stdout.write(Buffer.concat([header, payload]))
+setTimeout(() => {}, 30_000)
+`, { service: true });
+		const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect(error).toMatchObject({ kind: 'runtime' });
 	});
 
 	await test('preserves runtime errors and keeps the service alive', async () => {
@@ -148,15 +176,14 @@ await describe('ocr service', async () => {
 		const result = await ocr(fixtureData('hello.png'));
 		expect(result.text).toContain('Hello World');
 		expect(servicePidForTesting()).not.toBe(pid);
-		const currentPid = servicePidForTesting();
 		await waitFor(
 			async () => {
 				const directories = await serviceDirectories();
-				return directories.every(
-					name => name.startsWith(`mac-ocr-service-${currentPid}-`),
+				return !directories.some(
+					name => name.startsWith(`mac-ocr-service-${pid}-`),
 				);
 			},
-			'Expected stale service directories to be removed',
+			'Expected the crashed service directory to be removed',
 		);
 	});
 
