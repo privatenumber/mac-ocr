@@ -1,0 +1,54 @@
+import { describe, expect, test } from 'manten';
+import { importWrapper } from '../../utils.ts';
+
+await describe('protocol', async () => {
+	await test('rejects malformed protocol frames instead of crashing', async () => {
+		await using wrapper = await importWrapper(`#!/usr/bin/env node
+const payload = Buffer.from('null')
+const header = Buffer.alloc(4)
+header.writeUInt32LE(payload.length)
+process.stdout.write(Buffer.concat([header, payload]))
+setTimeout(() => {}, 30_000)
+`, { service: true });
+		const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect(error).toMatchObject({ kind: 'runtime' });
+	});
+
+	await test('keeps stderr scoped to its structured response', async () => {
+		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const frame = value => {
+  const payload = Buffer.from(JSON.stringify(value))
+  const header = Buffer.alloc(4)
+  header.writeUInt32LE(payload.length)
+  process.stdout.write(Buffer.concat([header, payload]))
+}
+frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
+let buffered = Buffer.alloc(0)
+process.stdin.on('data', chunk => {
+  buffered = Buffer.concat([buffered, chunk])
+  const length = buffered.readUInt32LE(0)
+  if (buffered.length < length + 4) return
+  const request = JSON.parse(buffered.subarray(4, length + 4))
+  process.stderr.write('diagnostic from another request\n')
+  frame({
+    id: request.id,
+    type: 'error',
+    error: { kind: 'usage', message: 'request failed', exitCode: null, stderr: '' },
+  })
+})
+`, { service: true });
+		try {
+			const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
+			expect(error).toMatchObject({ stderr: '' });
+		} finally {
+			wrapper.serviceApi.stopService();
+		}
+	});
+});

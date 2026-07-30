@@ -1,0 +1,115 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
+import { describe, expect, test } from 'manten';
+import { ocr } from '../../../src/index.ts';
+import {
+	servicePidForTesting,
+	stopService,
+} from '../../../src/service/index.ts';
+import { fixtureData } from '../../utils.ts';
+import { serviceDirectories, waitFor } from './utils.ts';
+
+const processExists = (pid: number): boolean => {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+await describe('ownership', async () => {
+	await test('stops and removes staged inputs when its Node parent exits', async () => {
+		const indexUrl = pathToFileURL(new URL('../../../src/index.ts', import.meta.url).pathname).href;
+		const serviceUrl = pathToFileURL(
+			new URL('../../../src/service/index.ts', import.meta.url).pathname,
+		).href;
+		const fixtureUrl = pathToFileURL(
+			new URL('../../fixtures/hello.png', import.meta.url).pathname,
+		).href;
+		const script = `
+import fs from 'node:fs/promises'
+import { ocr } from ${JSON.stringify(indexUrl)}
+import { servicePidForTesting } from ${JSON.stringify(serviceUrl)}
+void ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
+while (servicePidForTesting() === undefined) await new Promise(resolve => setTimeout(resolve, 10))
+process.stdout.write(String(servicePidForTesting()))
+process.stdin.resume()
+await new Promise(resolve => process.stdin.once('end', resolve))
+process.exit(0)
+`;
+		const parent = spawn(process.execPath, ['--input-type=module', '--eval', script]);
+		let stderr = '';
+		parent.stderr.on('data', (chunk) => {
+			stderr += chunk;
+		});
+		try {
+			const servicePid = await new Promise<number>((resolve, reject) => {
+				parent.once('error', reject);
+				parent.stdout.once('data', chunk => resolve(Number(chunk)));
+				parent.once('close', code => reject(new Error(`Helper exited ${code}: ${stderr}`)));
+			});
+			expect(servicePid).toBeGreaterThan(0);
+
+			// Start a cleanup owner while the helper PID is still live, then let its
+			// delayed sweep observe the helper service after that PID exits.
+			stopService();
+			const cleanupRequest = ocr(fixtureData('hello.png'));
+			await waitFor(
+				() => servicePidForTesting() !== undefined,
+				'Expected the cleanup service to start',
+			);
+			const close = once(parent, 'close');
+			parent.stdin.end();
+			const [code] = await close;
+			expect(code).toBe(0);
+			await cleanupRequest;
+			await waitFor(
+				() => !processExists(servicePid),
+				'Expected the orphaned service process to stop',
+			);
+			await waitFor(
+				async () => {
+					const directories = await serviceDirectories();
+					return !directories.some(
+						name => name.startsWith(`mac-ocr-service-${servicePid}-`),
+					);
+				},
+				'Expected the orphaned service directory to be removed',
+			);
+		} finally {
+			if (parent.exitCode === null) {
+				parent.kill();
+			}
+		}
+	});
+
+	await test('keeps worker-thread calls on the one-shot path', async () => {
+		const indexUrl = pathToFileURL(new URL('../../../src/index.ts', import.meta.url).pathname).href;
+		const serviceUrl = pathToFileURL(
+			new URL('../../../src/service/index.ts', import.meta.url).pathname,
+		).href;
+		const fixtureUrl = pathToFileURL(
+			new URL('../../fixtures/hello.png', import.meta.url).pathname,
+		).href;
+		const source = `
+import fs from 'node:fs/promises'
+import { parentPort } from 'node:worker_threads'
+import { ocr } from ${JSON.stringify(indexUrl)}
+import { servicePidForTesting } from ${JSON.stringify(serviceUrl)}
+const result = await ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
+parentPort.postMessage([result.text.includes('Hello World'), servicePidForTesting() ?? null])
+`;
+		const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(source)}`));
+		const message = once(worker, 'message');
+		const exit = once(worker, 'exit');
+		try {
+			expect(await message).toStrictEqual([[true, null]]);
+			expect(await exit).toStrictEqual([0]);
+		} finally {
+			await worker.terminate();
+		}
+	});
+});

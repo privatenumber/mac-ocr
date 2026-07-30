@@ -6,7 +6,7 @@ import {
 	waitForExit,
 	type Spawned,
 } from './process.ts';
-import { ocrWithService, shouldUseService } from './service.ts';
+import { ocrWithService, shouldUseService } from './service/index.ts';
 import type { Input, OcrOptions, OcrResult } from './types.ts';
 
 const label = 'mac-ocr ocr';

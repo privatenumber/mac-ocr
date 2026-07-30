@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createFixture } from 'fs-fixture';
 import type * as WrapperApiModule from '../src/index.ts';
-import type * as ServiceModule from '../src/service.ts';
+import type * as ServiceModule from '../src/service/index.ts';
 
 export const fixturePath = (name: string): string => fileURLToPath(
 	new URL(`fixtures/${name}`, import.meta.url),
@@ -41,7 +41,7 @@ export const importWrapper = async (
 	}
 	const [api, serviceApi] = await Promise.all([
 		import(pathToFileURL(fixture.getPath('src/index.ts')).href) as Promise<WrapperApi>,
-		import(pathToFileURL(fixture.getPath('src/service.ts')).href) as Promise<ServiceApi>,
+		import(pathToFileURL(fixture.getPath('src/service/index.ts')).href) as Promise<ServiceApi>,
 	]);
 	if (!options.service) {
 		serviceApi.disableServiceForTesting();
