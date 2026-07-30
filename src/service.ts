@@ -14,6 +14,7 @@ const maxFrameBytes = 64 * 1024 * 1024;
 const serviceDirectoryPattern = /^mac-ocr-service-\d+-[0-9A-Fa-f-]{36}$/;
 
 const removeServiceDirectory = (directory: string): void => {
+	// Swift owns normal cleanup; Node covers crashes before Swift's defer runs.
 	fs.rm(directory, {
 		recursive: true,
 		force: true,
@@ -23,7 +24,6 @@ const removeServiceDirectory = (directory: string): void => {
 type NativeHello = {
 	type: 'hello';
 	protocolVersion: number;
-	binaryVersion: string;
 	inputDirectory: string;
 };
 
@@ -46,10 +46,11 @@ type NativeResponse = {
 };
 
 type PendingRequest = {
+	id: number;
 	resolve: (result: OcrResult) => void;
 	reject: (error: unknown) => void;
 	signal?: AbortSignal;
-	abortListener?: () => void;
+	cancelAbortListener?: () => void;
 };
 
 type QueuedOcrRequest = {
@@ -57,11 +58,9 @@ type QueuedOcrRequest = {
 	arguments: string[];
 	password?: string;
 	signal?: AbortSignal;
-	state: 'queued' | 'active' | 'settled';
-	settled: boolean;
 	resolve: (result: OcrResult) => void;
 	reject: (error: unknown) => void;
-	abortListener?: () => void;
+	settleAbortListener?: () => void;
 };
 
 type Service = {
@@ -77,12 +76,16 @@ type Service = {
 	stop: () => void;
 };
 
+type ServiceState = {
+	promise?: Promise<Service>;
+	active?: Service;
+	stopStarting?: () => void;
+	startingPid?: number;
+};
+
 let serviceEnabled = true;
-let serviceGeneration = 0;
-let servicePromise: Promise<Service> | undefined;
-let activeService: Service | undefined;
-let stopStartingService: (() => void) | undefined;
-let startingServicePid: number | undefined;
+// Callback identity prevents a stopped service from clearing its replacement.
+let serviceState: ServiceState | undefined;
 const queuedOcrRequests: QueuedOcrRequest[] = [];
 let serviceQueueRunning = false;
 
@@ -142,7 +145,6 @@ const isNativeHello = (value: unknown): value is NativeHello => (
 	isRecord(value)
 	&& value.type === 'hello'
 	&& value.protocolVersion === protocolVersion
-	&& typeof value.binaryVersion === 'string'
 	&& typeof value.inputDirectory === 'string'
 	&& isServiceInputDirectory(value.inputDirectory)
 );
@@ -196,21 +198,20 @@ const isNativeResponse = (value: unknown): value is NativeResponse => {
 	);
 };
 
-const startService = (generation: number): Promise<Service> => new Promise((_resolve, _reject) => {
+const startService = (state: ServiceState): Promise<Service> => new Promise((_resolve, _reject) => {
 	const subprocess = childProcess.spawn(binaryPath, [`--service=${protocolVersion}`], {
 		stdio: ['pipe', 'pipe', 'pipe'],
 	});
-	if (generation === serviceGeneration) {
-		startingServicePid = subprocess.pid;
+	if (serviceState === state) {
+		state.startingPid = subprocess.pid;
 	}
-	const pending = new Map<number, PendingRequest>();
+	let pending: PendingRequest | undefined;
 	const stderrChunks: Buffer[] = [];
 	let nextRequestId = 0;
 	let stdout = Buffer.allocUnsafe(16 * 1024);
 	let stdoutUsed = 0;
 	let ready = false;
 	let closed = false;
-	let referenceCount = 0;
 	let service: Service;
 	const unrefIdleHandles = (): void => {
 		subprocess.unref();
@@ -220,23 +221,16 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 	};
 
 	const stderrText = (): string => Buffer.concat(stderrChunks).toString('utf8').trim();
-	const unref = (): void => {
-		if (referenceCount > 0) {
-			referenceCount -= 1;
-			if (referenceCount === 0) {
-				subprocess.unref();
-			}
-		}
-	};
 	const rejectPending = (error: unknown): void => {
-		for (const request of pending.values()) {
-			if (request.signal && request.abortListener) {
-				request.signal.removeEventListener('abort', request.abortListener);
-			}
-			request.reject(error);
-			unref();
+		if (!pending) {
+			return;
 		}
-		pending.clear();
+		if (pending.signal && pending.cancelAbortListener) {
+			pending.signal.removeEventListener('abort', pending.cancelAbortListener);
+		}
+		pending.reject(error);
+		pending = undefined;
+		subprocess.unref();
 	};
 	const close = (error?: unknown, didFailToSpawn = false): void => {
 		if (closed) {
@@ -254,11 +248,8 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 		if (!ready) {
 			_reject(failure);
 		}
-		if (generation === serviceGeneration) {
-			activeService = undefined;
-			servicePromise = undefined;
-			stopStartingService = undefined;
-			startingServicePid = undefined;
+		if (serviceState === state) {
+			serviceState = undefined;
 		}
 	};
 	const failProtocol = (message: string): void => {
@@ -268,28 +259,29 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 	const handleHello = (hello: NativeHello): void => {
 		ready = true;
 		service.inputDirectory = hello.inputDirectory;
-		if (generation === serviceGeneration) {
-			stopStartingService = undefined;
-			startingServicePid = undefined;
+		if (serviceState === state) {
+			state.stopStarting = undefined;
+			state.startingPid = undefined;
 		}
 		_resolve(service);
 		queueMicrotask(() => {
-			if (referenceCount === 0) {
+			// Let the first Promise continuation submit work before handles unref.
+			if (!pending) {
 				unrefIdleHandles();
 			}
 		});
 	};
 	const handleResponse = (response: NativeResponse): void => {
-		const request = pending.get(response.id);
-		if (!request) {
+		const request = pending;
+		if (!request || request.id !== response.id) {
 			failProtocol(`mac-ocr service returned unknown request ID ${response.id}`);
 			return;
 		}
-		pending.delete(response.id);
-		if (request.signal && request.abortListener) {
-			request.signal.removeEventListener('abort', request.abortListener);
+		pending = undefined;
+		if (request.signal && request.cancelAbortListener) {
+			request.signal.removeEventListener('abort', request.cancelAbortListener);
 		}
-		unref();
+		subprocess.unref();
 		if (request.signal?.aborted) {
 			request.reject(serviceAbortFailure(response.type === 'error' ? response.error.stderr : ''));
 			return;
@@ -362,7 +354,7 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 	service = {
 		pid: subprocess.pid!,
 		inputDirectory: '',
-		pendingRequests: () => pending.size,
+		pendingRequests: () => (pending ? 1 : 0),
 		request: (
 			inputName,
 			arguments_,
@@ -379,9 +371,9 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 			}
 			const id = nextRequestId;
 			nextRequestId = nextRequestId === 4_294_967_295 ? 0 : nextRequestId + 1;
-			if (pending.has(id)) {
+			if (pending) {
 				reject(new MacOcrError(
-					'mac-ocr service request ID space exhausted',
+					'mac-ocr service is already processing a request',
 					{ kind: 'internal' },
 				));
 				return;
@@ -393,10 +385,10 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 				arguments: arguments_,
 				password,
 			});
-			let abortListener: (() => void) | undefined;
+			let cancelAbortListener: (() => void) | undefined;
 			if (signal) {
-				abortListener = () => {
-					if (!pending.has(id)) {
+				cancelAbortListener = () => {
+					if (pending?.id !== id) {
 						return;
 					}
 					const cancelFrame = encodeFrame({
@@ -410,19 +402,18 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 					});
 				};
 			}
-			pending.set(id, {
+			pending = {
+				id,
 				resolve,
 				reject,
 				signal,
-				abortListener,
-			});
-			if (abortListener) {
-				signal!.addEventListener('abort', abortListener, { once: true });
+				cancelAbortListener,
+			};
+			if (cancelAbortListener) {
+				signal!.addEventListener('abort', cancelAbortListener, { once: true });
 			}
-			if (referenceCount === 0) {
-				subprocess.ref();
-			}
-			referenceCount += 1;
+			// The child alone keeps Node alive while this request is active.
+			subprocess.ref();
 			subprocess.stdin.write(frame, (error) => {
 				if (error) {
 					close(error);
@@ -436,8 +427,8 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 			close();
 		},
 	};
-	if (generation === serviceGeneration) {
-		stopStartingService = service.stop;
+	if (serviceState === state) {
+		state.stopStarting = service.stop;
 	}
 
 	subprocess.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
@@ -449,23 +440,22 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 });
 
 const ensureServiceIsRunning = (): Promise<Service> => {
-	if (!servicePromise) {
-		serviceGeneration += 1;
-		const generation = serviceGeneration;
-		servicePromise = startService(generation).then((service) => {
-			if (generation === serviceGeneration) {
-				activeService = service;
+	if (!serviceState) {
+		const state: ServiceState = {};
+		serviceState = state;
+		state.promise = startService(state).then((service) => {
+			if (serviceState === state) {
+				state.active = service;
 			}
 			return service;
 		}).catch((error) => {
-			if (generation === serviceGeneration) {
-				activeService = undefined;
-				servicePromise = undefined;
+			if (serviceState === state) {
+				serviceState = undefined;
 			}
 			throw error;
 		});
 	}
-	return servicePromise;
+	return serviceState.promise!;
 };
 
 const serviceInputFailure = (error: unknown): MacOcrError => {
@@ -528,29 +518,16 @@ const runQueuedOcr = async (
 };
 
 const removeQueuedAbortListener = (request: QueuedOcrRequest): void => {
-	if (request.signal && request.abortListener) {
-		request.signal.removeEventListener('abort', request.abortListener);
-	}
-};
-
-const rejectQueuedOcrRequest = (request: QueuedOcrRequest, error: unknown): void => {
-	if (!request.settled) {
-		request.settled = true;
-		request.reject(error);
+	if (request.signal && request.settleAbortListener) {
+		request.signal.removeEventListener('abort', request.settleAbortListener);
 	}
 };
 
 const rejectQueuedOcrRequests = (error: unknown): void => {
 	for (const request of queuedOcrRequests.splice(0)) {
-		request.state = 'settled';
 		removeQueuedAbortListener(request);
-		rejectQueuedOcrRequest(request, error);
+		request.reject(error);
 	}
-};
-
-const handleServiceQueueFailure = (error: unknown): void => {
-	serviceQueueRunning = false;
-	rejectQueuedOcrRequests(error);
 };
 
 const drainServiceQueue = async (): Promise<void> => {
@@ -558,10 +535,6 @@ const drainServiceQueue = async (): Promise<void> => {
 	try {
 		while (queuedOcrRequests.length > 0) {
 			const request = queuedOcrRequests.shift()!;
-			if (request.state !== 'queued') {
-				continue;
-			}
-			request.state = 'active';
 			try {
 				const result = await runQueuedOcr(
 					request.buffer,
@@ -569,25 +542,15 @@ const drainServiceQueue = async (): Promise<void> => {
 					request.password,
 					request.signal,
 				);
-				if (!request.settled) {
-					request.settled = true;
-					request.resolve(result);
-				}
+				request.resolve(result);
 			} catch (error) {
-				rejectQueuedOcrRequest(request, error);
+				request.reject(error);
 			} finally {
-				request.state = 'settled';
 				removeQueuedAbortListener(request);
 			}
 		}
 	} finally {
 		serviceQueueRunning = false;
-	}
-};
-
-const startServiceQueue = (): void => {
-	if (!serviceQueueRunning) {
-		drainServiceQueue().catch(handleServiceQueueFailure);
 	}
 };
 
@@ -606,27 +569,24 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 		arguments: arguments_,
 		password,
 		signal,
-		state: 'queued',
-		settled: false,
 		resolve,
 		reject,
 	};
 	if (signal) {
-		request.abortListener = () => {
-			if (request.state === 'queued') {
-				const index = queuedOcrRequests.indexOf(request);
-				if (index !== -1) {
-					queuedOcrRequests.splice(index, 1);
-				}
-				request.state = 'settled';
+		request.settleAbortListener = () => {
+			const index = queuedOcrRequests.indexOf(request);
+			if (index !== -1) {
+				queuedOcrRequests.splice(index, 1);
 				removeQueuedAbortListener(request);
 			}
-			rejectQueuedOcrRequest(request, serviceAbortFailure());
+			request.reject(serviceAbortFailure());
 		};
-		signal.addEventListener('abort', request.abortListener, { once: true });
+		signal.addEventListener('abort', request.settleAbortListener, { once: true });
 	}
 	queuedOcrRequests.push(request);
-	startServiceQueue();
+	if (!serviceQueueRunning) {
+		drainServiceQueue().catch(rejectQueuedOcrRequests);
+	}
 	return promise;
 };
 
@@ -636,13 +596,10 @@ export const shouldUseService = (): boolean => (
 
 export const stopService = (): void => {
 	rejectQueuedOcrRequests(serviceFailure('mac-ocr service stopped', ''));
-	serviceGeneration += 1;
-	stopStartingService?.();
-	stopStartingService = undefined;
-	startingServicePid = undefined;
-	activeService?.stop();
-	activeService = undefined;
-	servicePromise = undefined;
+	const state = serviceState;
+	serviceState = undefined;
+	state?.stopStarting?.();
+	state?.active?.stop();
 };
 
 export const disableServiceForTesting = (): void => {
@@ -650,6 +607,8 @@ export const disableServiceForTesting = (): void => {
 	serviceEnabled = false;
 };
 
-export const servicePidForTesting = (): number | undefined => activeService?.pid;
-export const startingServicePidForTesting = (): number | undefined => startingServicePid;
-export const pendingServiceRequestsForTesting = (): number => activeService?.pendingRequests() ?? 0;
+export const servicePidForTesting = (): number | undefined => serviceState?.active?.pid;
+export const startingServicePidForTesting = (): number | undefined => serviceState?.startingPid;
+export const pendingServiceRequestsForTesting = (): number => (
+	serviceState?.active?.pendingRequests() ?? 0
+);

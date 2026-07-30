@@ -151,12 +151,4 @@ private let imageBackedOCRTestsDisabled = {
 		#expect(fast.count < accurate.count)
 		#expect(fast.contains("en-US"))
 	}
-
-	@Test func cancellationThrowsCancellationError() {
-		let cancellation = OCRCancellation()
-		cancellation.cancel()
-		#expect(throws: CancellationError.self) {
-			try cancellation.checkCancellation()
-		}
-	}
 }

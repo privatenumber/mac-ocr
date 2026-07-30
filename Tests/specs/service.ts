@@ -124,7 +124,7 @@ const frame = value => {
   header.writeUInt32LE(payload.length)
   process.stdout.write(Buffer.concat([header, payload]))
 }
-frame({ type: 'hello', protocolVersion: 1, binaryVersion: 'test', inputDirectory: directory })
+frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
 let buffered = Buffer.alloc(0)
 process.stdin.on('data', chunk => {
   buffered = Buffer.concat([buffered, chunk])

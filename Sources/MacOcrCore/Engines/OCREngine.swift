@@ -64,46 +64,41 @@ public struct OCRResult: ResultPayload {
 	}
 }
 
-public final class OCRCancellation: @unchecked Sendable {
+final class OCRCancellation: @unchecked Sendable {
 	private let lock = NSLock()
 	private var request: VNRequest?
 	private var cancelled = false
 
-	public init() {}
-
-	public func cancel() {
-		lock.lock()
-		cancelled = true
-		let activeRequest = request
-		lock.unlock()
+	func cancel() {
+		let activeRequest = lock.withLock {
+			cancelled = true
+			return request
+		}
 		activeRequest?.cancel()
 	}
 
-	public func checkCancellation() throws {
-		lock.lock()
-		let isCancelled = cancelled
-		lock.unlock()
+	func checkCancellation() throws {
+		let isCancelled = lock.withLock { cancelled }
 		if isCancelled || Task.isCancelled {
 			throw CancellationError()
 		}
 	}
 
-	fileprivate func register(_ request: VNRequest) throws {
-		lock.lock()
-		if cancelled {
-			lock.unlock()
-			throw CancellationError()
+	func register(_ request: VNRequest) throws {
+		try lock.withLock {
+			if cancelled {
+				throw CancellationError()
+			}
+			self.request = request
 		}
-		self.request = request
-		lock.unlock()
 	}
 
-	fileprivate func unregister(_ request: VNRequest) {
-		lock.lock()
-		if self.request === request {
-			self.request = nil
+	func unregister(_ request: VNRequest) {
+		lock.withLock {
+			if self.request === request {
+				self.request = nil
+			}
 		}
-		lock.unlock()
 	}
 }
 
@@ -356,13 +351,17 @@ func recognizeText(
 public enum OCREngine {
 	public static func run(
 		session: VisionSession,
-		options: OCROptions,
-		cancellation: OCRCancellation? = nil
+		options: OCROptions
 	) async throws -> OCRResult {
-		try cancellation?.checkCancellation()
-		return try await VisionRuntime.shared.run(session) { session in
-			try cancellation?.checkCancellation()
-			return try recognizeText(in: session, options: options, cancellation: cancellation)
+		let cancellation = OCRCancellation()
+		return try await withTaskCancellationHandler {
+			try cancellation.checkCancellation()
+			return try await VisionRuntime.shared.run(session) { session in
+				try cancellation.checkCancellation()
+				return try recognizeText(in: session, options: options, cancellation: cancellation)
+			}
+		} onCancel: {
+			cancellation.cancel()
 		}
 	}
 }
