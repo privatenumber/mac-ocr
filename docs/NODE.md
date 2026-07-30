@@ -80,7 +80,7 @@ const fastLanguages = await supportedLanguages({ fast: true })
 | `regionOfInterest` | object \| tuple \| string | Restrict recognition to a sub-rectangle (see below) |
 | `pdfDpi` | `number \| 'auto'` | PDF rasterization DPI (`'auto'` default, or `72`–`600`) |
 | `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). Forwarded to the CLI via the env var, never `argv`, so it stays out of the process list |
-| `signal` | `AbortSignal` | Abort the underlying subprocess |
+| `signal` | `AbortSignal` | Abort this call. Main-thread `ocr()` cancels its request in the shared service; one-shot APIs stop their dedicated subprocess |
 
 `ocr` and `ocr.pages` additionally accept:
 
@@ -174,13 +174,15 @@ setTimeout(() => controller.abort(), 5_000)
 await ocr(bytes, { signal: controller.signal })   // rejects with MacOcrError, kind 'abort'
 ```
 
+Queued `ocr()` calls reject immediately when aborted and are removed before their bytes are staged. An active call asks Vision to cancel only that request; the shared service remains available for subsequent OCR calls.
+
 ## Process reuse
 
-Ordinary main-thread `ocr()` calls without an `AbortSignal` share one lazily started native service within the current Node process. Requests retain independent Promises and errors while Swift executes Vision work serially. The service is unreferenced while idle, so it does not keep Node alive; a crashed service rejects pending work and the next call starts a fresh process.
+Ordinary main-thread `ocr()` calls share one lazily started native service within the current Node process, including calls with an `AbortSignal`. Requests retain independent Promises, cancellation, and errors while Swift executes Vision work serially. The service is unreferenced while idle, so it does not keep Node alive; a crashed service rejects pending work and the next call starts a fresh process.
 
-Calls with an `AbortSignal` retain the dedicated one-shot subprocess path so aborting one call cannot affect unrelated service requests. Worker-thread calls also stay one-shot so a native child cannot outlive the worker that launched it. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
+Worker-thread calls stay one-shot so a native child cannot outlive the worker that launched it. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` also retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
 
-Input bytes are staged in private temporary files before service requests. This avoids repeatedly transferring large images through macOS pipes and lets the service reuse one native process. Node removes the private directory after each response.
+Input bytes are copied when `ocr()` is called, preserving invocation-time contents even if the caller later mutates its buffer. The queue stages only its active request in a private temporary file, bounding disk use while avoiding slow large-image transfer through macOS pipes. Node removes the file after each response.
 
 ## Tree-shaking
 

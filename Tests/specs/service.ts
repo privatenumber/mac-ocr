@@ -156,11 +156,68 @@ setTimeout(() => {}, 30_000)
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('keeps AbortSignal calls on the one-shot path', async () => {
+	await test('snapshots mutable input bytes before queueing', async () => {
+		const input = fixtureData('hello.png');
+		const resultPromise = ocr(input);
+		input.fill(0);
+		const result = await resultPromise;
+		expect(result.text).toContain('Hello World');
+	});
+
+	await test('normalizes protocol strings to well-formed Unicode', async () => {
+		const pid = servicePidForTesting();
+		const result = await ocr(fixtureData('hello.png'), { password: '\uD800' });
+		expect(result.text).toContain('Hello World');
+		expect(servicePidForTesting()).toBe(pid);
+	});
+
+	await test('rejects a pre-aborted service request', async () => {
 		const pid = servicePidForTesting();
 		const controller = new AbortController();
 		controller.abort();
-		await expect(ocr(fixtureData('hello.png'), { signal: controller.signal })).rejects.toThrow(/abort/i);
+		const error = await ocr(
+			fixtureData('hello.png'),
+			{ signal: controller.signal },
+		).catch((error_: unknown) => error_);
+		expect(error).toMatchObject({ kind: 'abort' });
+		expect(servicePidForTesting()).toBe(pid);
+	});
+
+	await test('removes an aborted queued request before staging', async () => {
+		const pid = servicePidForTesting();
+		const blocker = ocr(fixtureData('document-photo.png'));
+		await waitFor(
+			() => pendingServiceRequestsForTesting() > 0,
+			'Expected the blocking service request to start',
+		);
+		const controller = new AbortController();
+		const queued = ocr(fixtureData('hello.png'), { signal: controller.signal });
+		controller.abort();
+		const outcome = await Promise.race([
+			queued.catch((error: unknown) => error),
+			delay(250, 'timeout'),
+		]);
+		expect(outcome).toMatchObject({ kind: 'abort' });
+		await blocker;
+		expect(servicePidForTesting()).toBe(pid);
+	});
+
+	await test('cancels active Vision work without stopping the service', async () => {
+		const pid = servicePidForTesting();
+		const controller = new AbortController();
+		const pending = ocr(
+			fixtureData('document-photo.png'),
+			{ signal: controller.signal },
+		);
+		await waitFor(
+			() => pendingServiceRequestsForTesting() > 0,
+			'Expected the cancellable service request to start',
+		);
+		controller.abort();
+		const error = await pending.catch((error_: unknown) => error_);
+		expect(error).toMatchObject({ kind: 'abort' });
+		const result = await ocr(fixtureData('hello.png'));
+		expect(result.text).toContain('Hello World');
 		expect(servicePidForTesting()).toBe(pid);
 	});
 

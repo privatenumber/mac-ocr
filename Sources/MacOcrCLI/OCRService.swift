@@ -13,11 +13,11 @@ private struct ServiceHello: Encodable {
 	let inputDirectory: String
 }
 
-private struct ServiceRequest: Decodable {
+private struct ServiceRequest: Decodable, Sendable {
 	let id: UInt32
 	let command: String
-	let inputName: String
-	let arguments: [String]
+	let inputName: String?
+	let arguments: [String]?
 	let password: String?
 }
 
@@ -47,6 +47,12 @@ private struct ServiceResponse: Encodable {
 	let type: String
 	let result: ServiceResult?
 	let error: ServiceError?
+}
+
+private struct ActiveServiceRequest {
+	let id: UInt32
+	let cancellation: OCRCancellation
+	let task: Task<Void, Error>
 }
 
 private func readServiceData(count: Int) throws -> Data? {
@@ -92,8 +98,7 @@ private func writeServiceFrame<Value: Encodable>(_ value: Value) throws {
 	}
 	var length = UInt32(payload.count).littleEndian
 	let header = withUnsafeBytes(of: &length) { Data($0) }
-	FileHandle.standardOutput.write(header)
-	FileHandle.standardOutput.write(payload)
+	FileHandle.standardOutput.write(header + payload)
 }
 
 private func cleanStaleServiceInputDirectories() {
@@ -131,37 +136,46 @@ private func monitorServiceParent(_ parent: pid_t, inputDirectory: URL) {
 }
 
 private func serviceInputPath(request: ServiceRequest, inputDirectory: URL) throws -> String {
-	guard UUID(uuidString: request.inputName) != nil else {
+	guard let inputName = request.inputName, UUID(uuidString: inputName) != nil else {
 		throw UsageError("Invalid service input name")
 	}
-	return inputDirectory.appendingPathComponent(request.inputName, isDirectory: false).path
+	return inputDirectory.appendingPathComponent(inputName, isDirectory: false).path
 }
 
-private func serviceResult(request: ServiceRequest, inputDirectory: URL) async throws -> ServiceResult {
-	guard request.command == "ocr" else {
+private func serviceResult(
+	request: ServiceRequest,
+	inputDirectory: URL,
+	cancellation: OCRCancellation
+) async throws -> ServiceResult {
+	guard request.command == "ocr", let arguments = request.arguments else {
 		throw UsageError("Unsupported service command: \(request.command)")
 	}
+	try cancellation.checkCancellation()
 	let inputPath = try serviceInputPath(request: request, inputDirectory: inputDirectory)
 	defer { try? FileManager.default.removeItem(atPath: inputPath) }
-	let command = try OCRCommand.parse(request.arguments + [inputPath])
+	let command = try OCRCommand.parse(arguments + [inputPath])
 	let options = try command.recognition.buildOCROptions(
 		regionOfInterest: try command.common.resolvedROI(),
 		maxCandidates: command.maxCandidates
 	)
+	try cancellation.checkCancellation()
 	let loader = try await openSource(
 		.file(inputPath),
 		pdfDpi: command.common.resolvedPdfDpi,
 		pdfPassword: request.password
 	)
+	try cancellation.checkCancellation()
 	guard loader.count == 1 else {
 		throw ServiceInputUsageError(
 			errorDescription: "Input has multiple pages. Use `ocr.pages()` to read them all."
 		)
 	}
 	let loaded = try loader.load(0)
+	try cancellation.checkCancellation()
 	let result = try await OCREngine.run(
 		session: VisionSession(image: loaded.image, orientation: loaded.orientation),
-		options: options
+		options: options,
+		cancellation: cancellation
 	)
 	return ServiceResult(
 		page: 1,
@@ -174,6 +188,15 @@ private func serviceResult(request: ServiceRequest, inputDirectory: URL) async t
 }
 
 private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
+	if error is CancellationError {
+		return ServiceError(
+			kind: "abort",
+			code: nil,
+			message: "mac-ocr ocr was aborted",
+			exitCode: nil,
+			stderr: ""
+		)
+	}
 	if let error = error as? ValidationError {
 		return ServiceError(
 			kind: "usage",
@@ -226,6 +249,36 @@ private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
 	)
 }
 
+private func processServiceRequest(
+	request: ServiceRequest,
+	inputDirectory: URL,
+	cancellation: OCRCancellation
+) async throws {
+	let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
+	let response: ServiceResponse
+	do {
+		let result = try await serviceResult(
+			request: request,
+			inputDirectory: inputDirectory,
+			cancellation: cancellation
+		)
+		response = ServiceResponse(
+			id: request.id,
+			type: "result",
+			result: result,
+			error: nil
+		)
+	} catch {
+		response = ServiceResponse(
+			id: request.id,
+			type: "error",
+			result: nil,
+			error: serviceError(error, inputPath: inputPath)
+		)
+	}
+	try writeServiceFrame(response)
+}
+
 public enum OCRService {
 	public static let protocolVersion = 1
 
@@ -253,32 +306,40 @@ public enum OCRService {
 				inputDirectory: inputDirectory.path
 			))
 		let decoder = JSONDecoder()
+		var activeRequest: ActiveServiceRequest?
 		while let frame = try readServiceFrame() {
 			let request = try decoder.decode(ServiceRequest.self, from: frame)
-			let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
-			do {
-				let result = try await serviceResult(
-					request: request,
-					inputDirectory: inputDirectory
-				)
-				try writeServiceFrame(
-					ServiceResponse(
-						id: request.id,
-						type: "result",
-						result: result,
-						error: nil
+			switch request.command {
+			case "cancel":
+				if activeRequest?.id == request.id {
+					activeRequest?.cancellation.cancel()
+					activeRequest?.task.cancel()
+				}
+			case "ocr":
+				if let activeRequest {
+					try await activeRequest.task.value
+				}
+				let cancellation = OCRCancellation()
+				let task = Task {
+					try await processServiceRequest(
+						request: request,
+						inputDirectory: inputDirectory,
+						cancellation: cancellation
 					)
+				}
+				activeRequest = ActiveServiceRequest(
+					id: request.id,
+					cancellation: cancellation,
+					task: task
 				)
-			} catch {
-				try writeServiceFrame(
-					ServiceResponse(
-						id: request.id,
-						type: "error",
-						result: nil,
-						error: serviceError(error, inputPath: inputPath)
-					)
-				)
+			default:
+				throw UsageError("Unsupported service command: \(request.command)")
 			}
+		}
+		if let activeRequest {
+			activeRequest.cancellation.cancel()
+			activeRequest.task.cancel()
+			try await activeRequest.task.value
 		}
 	}
 }

@@ -48,13 +48,32 @@ type NativeResponse = {
 type PendingRequest = {
 	resolve: (result: OcrResult) => void;
 	reject: (error: unknown) => void;
+	signal?: AbortSignal;
+	abortListener?: () => void;
+};
+
+type QueuedOcrRequest = {
+	buffer: Buffer;
+	arguments: string[];
+	password?: string;
+	signal?: AbortSignal;
+	state: 'queued' | 'active' | 'settled';
+	settled: boolean;
+	resolve: (result: OcrResult) => void;
+	reject: (error: unknown) => void;
+	abortListener?: () => void;
 };
 
 type Service = {
 	pid: number;
 	inputDirectory: string;
 	pendingRequests: () => number;
-	request: (inputName: string, arguments_: string[], password?: string) => Promise<OcrResult>;
+	request: (
+		inputName: string,
+		arguments_: string[],
+		password?: string,
+		signal?: AbortSignal,
+	) => Promise<OcrResult>;
 	stop: () => void;
 };
 
@@ -64,19 +83,15 @@ let servicePromise: Promise<Service> | undefined;
 let activeService: Service | undefined;
 let stopStartingService: (() => void) | undefined;
 let startingServicePid: number | undefined;
-let queuedRequestGeneration = 0;
-let queuedRequestFailure: unknown;
-let serviceRequestQueue: Promise<void> = Promise.resolve();
+const queuedOcrRequests: QueuedOcrRequest[] = [];
+let serviceQueueRunning = false;
 
-const settleQueuedRequest = (): void => {};
-
-const invalidateQueuedRequests = (error: unknown): void => {
-	queuedRequestGeneration += 1;
-	queuedRequestFailure = error;
-};
+const normalizeProtocolString = (_key: string, value: unknown): unknown => (
+	typeof value === 'string' ? value.toWellFormed() : value
+);
 
 const encodeFrame = (value: unknown): Buffer => {
-	const payload = Buffer.from(JSON.stringify(value), 'utf8');
+	const payload = Buffer.from(JSON.stringify(value, normalizeProtocolString), 'utf8');
 	if (payload.byteLength > maxFrameBytes) {
 		throw new MacOcrError('mac-ocr service request exceeds the 64 MiB limit', { kind: 'usage' });
 	}
@@ -103,6 +118,14 @@ const serviceSpawnFailure = (error: unknown, stderr: string): MacOcrError => {
 		cause: error,
 	});
 };
+
+const serviceAbortFailure = (stderr = ''): MacOcrError => new MacOcrError(
+	stderr || 'mac-ocr ocr was aborted',
+	{
+		kind: 'abort',
+		stderr,
+	},
+);
 
 const isServiceInputDirectory = (directory: string): boolean => (
 	path.dirname(directory) === os.tmpdir()
@@ -131,6 +154,7 @@ const isNativeError = (value: unknown): value is NativeError => (
 		|| value.kind === 'unavailable'
 		|| value.kind === 'runtime'
 		|| value.kind === 'internal'
+		|| value.kind === 'abort'
 	)
 	&& (value.code === undefined || typeof value.code === 'string')
 	&& typeof value.message === 'string'
@@ -206,6 +230,9 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 	};
 	const rejectPending = (error: unknown): void => {
 		for (const request of pending.values()) {
+			if (request.signal && request.abortListener) {
+				request.signal.removeEventListener('abort', request.abortListener);
+			}
 			request.reject(error);
 			unref();
 		}
@@ -222,7 +249,7 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 		const failure = didFailToSpawn
 			? serviceSpawnFailure(error, stderrText())
 			: serviceFailure('mac-ocr service stopped', stderrText(), error);
-		invalidateQueuedRequests(failure);
+		rejectQueuedOcrRequests(failure);
 		rejectPending(failure);
 		if (!ready) {
 			_reject(failure);
@@ -259,7 +286,14 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 			return;
 		}
 		pending.delete(response.id);
+		if (request.signal && request.abortListener) {
+			request.signal.removeEventListener('abort', request.abortListener);
+		}
 		unref();
+		if (request.signal?.aborted) {
+			request.reject(serviceAbortFailure(response.type === 'error' ? response.error.stderr : ''));
+			return;
+		}
 		if (response.type === 'result') {
 			request.resolve(response.result);
 			return;
@@ -329,9 +363,18 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 		pid: subprocess.pid!,
 		inputDirectory: '',
 		pendingRequests: () => pending.size,
-		request: (inputName, arguments_, password) => new Promise<OcrResult>((resolve, reject) => {
+		request: (
+			inputName,
+			arguments_,
+			password,
+			signal,
+		) => new Promise<OcrResult>((resolve, reject) => {
 			if (closed) {
 				reject(serviceFailure('mac-ocr service is not running', stderrText()));
+				return;
+			}
+			if (signal?.aborted) {
+				reject(serviceAbortFailure());
 				return;
 			}
 			const id = nextRequestId;
@@ -350,10 +393,32 @@ const startService = (generation: number): Promise<Service> => new Promise((_res
 				arguments: arguments_,
 				password,
 			});
+			let abortListener: (() => void) | undefined;
+			if (signal) {
+				abortListener = () => {
+					if (!pending.has(id)) {
+						return;
+					}
+					const cancelFrame = encodeFrame({
+						id,
+						command: 'cancel',
+					});
+					subprocess.stdin.write(cancelFrame, (error) => {
+						if (error) {
+							close(error);
+						}
+					});
+				};
+			}
 			pending.set(id, {
 				resolve,
 				reject,
+				signal,
+				abortListener,
 			});
+			if (abortListener) {
+				signal!.addEventListener('abort', abortListener, { once: true });
+			}
 			if (referenceCount === 0) {
 				subprocess.ref();
 			}
@@ -425,6 +490,7 @@ const runQueuedOcr = async (
 	buffer: Buffer,
 	arguments_: string[],
 	password?: string,
+	signal?: AbortSignal,
 ): Promise<OcrResult> => {
 	let inputPath: string | undefined;
 	let primaryError: unknown;
@@ -440,7 +506,7 @@ const runQueuedOcr = async (
 		} catch (error) {
 			throw serviceInputFailure(error);
 		}
-		return await service.request(inputName, arguments_, password);
+		return await service.request(inputName, arguments_, password, signal);
 	} catch (error) {
 		primaryError = error;
 		throw error;
@@ -451,27 +517,114 @@ const runQueuedOcr = async (
 	}
 };
 
-export const ocrWithService = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
-	const buffer = toBuffer(input);
-	const arguments_ = buildArgs(options);
-	const password = options?.password || process.env.MAC_OCR_PDF_PASSWORD;
-	const generation = queuedRequestGeneration;
-	const request = serviceRequestQueue.then(() => {
-		if (generation !== queuedRequestGeneration) {
-			throw queuedRequestFailure;
-		}
-		return runQueuedOcr(buffer, arguments_, password);
-	});
-	serviceRequestQueue = request.then(settleQueuedRequest, settleQueuedRequest);
-	return request;
+const removeQueuedAbortListener = (request: QueuedOcrRequest): void => {
+	if (request.signal && request.abortListener) {
+		request.signal.removeEventListener('abort', request.abortListener);
+	}
 };
 
-export const shouldUseService = (options?: OcrOptions): boolean => (
-	serviceEnabled && isMainThread && !options?.signal
+const rejectQueuedOcrRequest = (request: QueuedOcrRequest, error: unknown): void => {
+	if (!request.settled) {
+		request.settled = true;
+		request.reject(error);
+	}
+};
+
+const rejectQueuedOcrRequests = (error: unknown): void => {
+	for (const request of queuedOcrRequests.splice(0)) {
+		request.state = 'settled';
+		removeQueuedAbortListener(request);
+		rejectQueuedOcrRequest(request, error);
+	}
+};
+
+const handleServiceQueueFailure = (error: unknown): void => {
+	serviceQueueRunning = false;
+	rejectQueuedOcrRequests(error);
+};
+
+const drainServiceQueue = async (): Promise<void> => {
+	serviceQueueRunning = true;
+	try {
+		while (queuedOcrRequests.length > 0) {
+			const request = queuedOcrRequests.shift()!;
+			if (request.state !== 'queued') {
+				continue;
+			}
+			request.state = 'active';
+			try {
+				const result = await runQueuedOcr(
+					request.buffer,
+					request.arguments,
+					request.password,
+					request.signal,
+				);
+				if (!request.settled) {
+					request.settled = true;
+					request.resolve(result);
+				}
+			} catch (error) {
+				rejectQueuedOcrRequest(request, error);
+			} finally {
+				request.state = 'settled';
+				removeQueuedAbortListener(request);
+			}
+		}
+	} finally {
+		serviceQueueRunning = false;
+	}
+};
+
+const startServiceQueue = (): void => {
+	if (!serviceQueueRunning) {
+		drainServiceQueue().catch(handleServiceQueueFailure);
+	}
+};
+
+export const ocrWithService = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
+	const buffer = Buffer.from(toBuffer(input));
+	const arguments_ = buildArgs(options);
+	const password = options?.password || process.env.MAC_OCR_PDF_PASSWORD;
+	const signal = options?.signal;
+	if (signal?.aborted) {
+		throw serviceAbortFailure();
+	}
+	const { promise, resolve, reject } = Promise.withResolvers<OcrResult>();
+	const request: QueuedOcrRequest = {
+		buffer,
+		arguments: arguments_,
+		password,
+		signal,
+		state: 'queued',
+		settled: false,
+		resolve,
+		reject,
+	};
+	if (signal) {
+		request.abortListener = () => {
+			if (request.state === 'queued') {
+				const index = queuedOcrRequests.indexOf(request);
+				if (index !== -1) {
+					queuedOcrRequests.splice(index, 1);
+				}
+				request.state = 'settled';
+				removeQueuedAbortListener(request);
+			}
+			rejectQueuedOcrRequest(request, serviceAbortFailure());
+		};
+		signal.addEventListener('abort', request.abortListener, { once: true });
+	}
+	queuedOcrRequests.push(request);
+	startServiceQueue();
+	return promise;
+};
+
+export const shouldUseService = (): boolean => (
+	serviceEnabled && isMainThread
 );
 
 export const stopService = (): void => {
-	invalidateQueuedRequests(serviceFailure('mac-ocr service stopped', ''));
+	rejectQueuedOcrRequests(serviceFailure('mac-ocr service stopped', ''));
 	serviceGeneration += 1;
 	stopStartingService?.();
 	stopStartingService = undefined;

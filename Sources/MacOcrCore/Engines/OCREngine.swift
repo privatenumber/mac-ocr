@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Vision
 
 public struct OCROptions: Sendable {
@@ -60,6 +61,49 @@ public struct OCRResult: ResultPayload {
 	public init(text: String, observations: [Observation]) {
 		self.text = text
 		self.observations = observations
+	}
+}
+
+public final class OCRCancellation: @unchecked Sendable {
+	private let lock = NSLock()
+	private var request: VNRequest?
+	private var cancelled = false
+
+	public init() {}
+
+	public func cancel() {
+		lock.lock()
+		cancelled = true
+		let activeRequest = request
+		lock.unlock()
+		activeRequest?.cancel()
+	}
+
+	public func checkCancellation() throws {
+		lock.lock()
+		let isCancelled = cancelled
+		lock.unlock()
+		if isCancelled || Task.isCancelled {
+			throw CancellationError()
+		}
+	}
+
+	fileprivate func register(_ request: VNRequest) throws {
+		lock.lock()
+		if cancelled {
+			lock.unlock()
+			throw CancellationError()
+		}
+		self.request = request
+		lock.unlock()
+	}
+
+	fileprivate func unregister(_ request: VNRequest) {
+		lock.lock()
+		if self.request === request {
+			self.request = nil
+		}
+		lock.unlock()
 	}
 }
 
@@ -209,7 +253,8 @@ public func supportedLanguages(fast: Bool) -> [String] {
 /// recognition entry point.
 func recognizeText(
 	in session: VisionSession,
-	options: OCROptions
+	options: OCROptions,
+	cancellation: OCRCancellation? = nil
 ) throws -> OCRResult {
 	var recognizedObservations: [Observation] = []
 	var recognitionError: Error?
@@ -281,7 +326,15 @@ func recognizeText(
 		request.regionOfInterest = CGRect(roi)
 	}
 
-	try session.handler.perform([request])
+	try cancellation?.register(request)
+	defer { cancellation?.unregister(request) }
+	do {
+		try session.handler.perform([request])
+	} catch {
+		try cancellation?.checkCancellation()
+		throw error
+	}
+	try cancellation?.checkCancellation()
 
 	if let error = recognitionError {
 		throw error
@@ -301,9 +354,15 @@ func recognizeText(
 /// serial `VisionRuntime` executor. Use this (never the bare `recognizeText`)
 /// whenever multiple async callers may exist.
 public enum OCREngine {
-	public static func run(session: VisionSession, options: OCROptions) async throws -> OCRResult {
-		try await VisionRuntime.shared.run(session) { session in
-			try recognizeText(in: session, options: options)
+	public static func run(
+		session: VisionSession,
+		options: OCROptions,
+		cancellation: OCRCancellation? = nil
+	) async throws -> OCRResult {
+		try cancellation?.checkCancellation()
+		return try await VisionRuntime.shared.run(session) { session in
+			try cancellation?.checkCancellation()
+			return try recognizeText(in: session, options: options, cancellation: cancellation)
 		}
 	}
 }

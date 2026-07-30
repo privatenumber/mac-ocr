@@ -85,7 +85,7 @@ const ocrSingleProcess = async (input: Input, options?: OcrOptions): Promise<Ocr
 };
 
 const ocrSingle = (input: Input, options?: OcrOptions): Promise<OcrResult> => (
-	shouldUseService(options)
+	shouldUseService()
 		? ocrWithService(input, options)
 		: ocrSingleProcess(input, options)
 );

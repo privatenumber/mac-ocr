@@ -96,7 +96,7 @@ export type CommonOptions = {
 	/** Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). */
 	password?: string;
 
-	/** Abort the underlying subprocess. */
+	/** Abort this operation. */
 	signal?: AbortSignal;
 };
 
