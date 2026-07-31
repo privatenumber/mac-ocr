@@ -4,11 +4,9 @@ import { createFixture } from 'fs-fixture';
 import type * as WrapperApiModule from '../src/index.ts';
 import type * as ServiceModule from '../src/service/index.ts';
 
-export const fixturePath = (name: string): string => fileURLToPath(
-	new URL(`fixtures/${name}`, import.meta.url),
+export const fixtureData = (name: string): Buffer => fs.readFileSync(
+	fileURLToPath(new URL(`fixtures/${name}`, import.meta.url)),
 );
-
-export const fixtureData = (name: string): Buffer => fs.readFileSync(fixturePath(name));
 
 const sourceDirectory = fileURLToPath(new URL('../src', import.meta.url));
 

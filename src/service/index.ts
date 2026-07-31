@@ -32,11 +32,11 @@ let serviceEnabled = true;
 const queuedOcrRequests: QueuedOcrRequest[] = [];
 let serviceQueueRunning = false;
 
-const removeInput = async (inputPath: string, suppressError: boolean): Promise<void> => {
+const removeStagedInput = async (inputPath: string, suppressFailure: boolean): Promise<void> => {
 	try {
 		await fs.rm(inputPath, { force: true });
 	} catch (error) {
-		if (!suppressError) {
+		if (!suppressFailure) {
 			throw serviceInputFailure(error);
 		}
 	}
@@ -87,7 +87,7 @@ const runQueuedOcr = async (
 		throw error;
 	} finally {
 		if (inputPath) {
-			await removeInput(inputPath, primaryError !== undefined);
+			await removeStagedInput(inputPath, primaryError !== undefined);
 		}
 	}
 };

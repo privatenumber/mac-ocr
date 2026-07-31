@@ -182,8 +182,6 @@ const startNativeService = (
 		handleResponse(value);
 		return !closed;
 	};
-	const readStdout = createFrameDecoder(handleFrame, failProtocol);
-
 	service = {
 		pid: subprocess.pid!,
 		inputDirectory: '',
@@ -265,7 +263,7 @@ const startNativeService = (
 	}
 
 	subprocess.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-	subprocess.stdout.on('data', readStdout);
+	subprocess.stdout.on('data', createFrameDecoder(handleFrame, failProtocol));
 	subprocess.stdout.once('end', () => close());
 	subprocess.stdin.once('error', close);
 	subprocess.once('error', error => close(error, !ready));
