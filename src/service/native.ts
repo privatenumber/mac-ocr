@@ -56,14 +56,6 @@ type ExitStatus = {
 // Callback identity prevents a stopped service from clearing its replacement.
 let serviceState: ServiceState | undefined;
 
-const removeServiceDirectory = (directory: string): void => {
-	// Swift owns normal cleanup; Node covers crashes before Swift's defer runs.
-	fs.rm(directory, {
-		recursive: true,
-		force: true,
-	}).catch(() => {});
-};
-
 const startNativeService = (
 	state: ServiceState,
 	rejectQueuedRequests: RejectQueuedRequests,
@@ -109,7 +101,11 @@ const startNativeService = (
 		}
 		closed = true;
 		if (service?.inputDirectory) {
-			removeServiceDirectory(service.inputDirectory);
+			// Swift owns normal cleanup; Node covers crashes before Swift's defer runs.
+			fs.rm(service.inputDirectory, {
+				recursive: true,
+				force: true,
+			}).catch(() => {});
 		}
 		let message = 'mac-ocr service stopped';
 		let exitCode: number | null | undefined;
