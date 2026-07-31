@@ -36,6 +36,20 @@ await describe('recovery', async () => {
 		expect((error as MacOcrError).kind).toBe('spawn');
 	});
 
+	await test('preserves an early service exit code', async () => {
+		await using wrapper = await importWrapper(
+			'#!/usr/bin/env node\nprocess.exit(7)\n',
+			{ service: true },
+		);
+		const error = await wrapper.api.ocr(Buffer.from('dummy')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect(error).toMatchObject({
+			kind: 'runtime',
+			exitCode: 7,
+		});
+		expect((error as Error).message).toMatch(/code 7/);
+	});
+
 	await test('rejects pending work and lazily restarts after a crash', async () => {
 		const pid = await ensureServiceForTesting();
 		const pending = Array.from(

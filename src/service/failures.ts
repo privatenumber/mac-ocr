@@ -4,10 +4,12 @@ export const serviceFailure = (
 	message: string,
 	stderr: string,
 	cause?: unknown,
+	exitCode?: number | null,
 ): MacOcrError => new MacOcrError(stderr || message, {
 	kind: 'runtime',
 	stderr,
 	cause,
+	exitCode,
 });
 
 export const serviceSpawnFailure = (error: unknown, stderr: string): MacOcrError => {

@@ -48,6 +48,11 @@ type ServiceState = {
 
 type RejectQueuedRequests = (error: unknown) => void;
 
+type ExitStatus = {
+	code: number | null;
+	signal: NodeJS.Signals | null;
+};
+
 // Callback identity prevents a stopped service from clearing its replacement.
 let serviceState: ServiceState | undefined;
 
@@ -94,7 +99,11 @@ const startNativeService = (
 		pending = undefined;
 		subprocess.unref();
 	};
-	const close = (error?: unknown, didFailToSpawn = false): void => {
+	const close = (
+		error?: unknown,
+		didFailToSpawn = false,
+		exitStatus?: ExitStatus,
+	): void => {
 		if (closed) {
 			return;
 		}
@@ -102,9 +111,18 @@ const startNativeService = (
 		if (service?.inputDirectory) {
 			removeServiceDirectory(service.inputDirectory);
 		}
+		let message = 'mac-ocr service stopped';
+		let exitCode: number | null | undefined;
+		if (exitStatus?.signal) {
+			message = `mac-ocr service was killed by ${exitStatus.signal}`;
+			exitCode = null;
+		} else if (exitStatus?.code !== null && exitStatus?.code !== undefined) {
+			message = `mac-ocr service exited with code ${exitStatus.code}`;
+			exitCode = exitStatus.code;
+		}
 		const failure = didFailToSpawn
 			? serviceSpawnFailure(error, stderrText())
-			: serviceFailure('mac-ocr service stopped', stderrText(), error);
+			: serviceFailure(message, stderrText(), error, exitCode);
 		rejectQueuedRequests(failure);
 		rejectPending(failure);
 		if (!ready) {
@@ -264,10 +282,12 @@ const startNativeService = (
 
 	subprocess.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 	subprocess.stdout.on('data', createFrameDecoder(handleFrame, failProtocol));
-	subprocess.stdout.once('end', () => close());
 	subprocess.stdin.once('error', close);
 	subprocess.once('error', error => close(error, !ready));
-	subprocess.once('close', () => close());
+	subprocess.once('close', (code, signal) => close(undefined, false, {
+		code,
+		signal,
+	}));
 });
 
 export const getNativeService = (
