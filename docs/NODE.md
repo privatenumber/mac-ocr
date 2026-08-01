@@ -12,7 +12,7 @@ import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
 
 ## Input
 
-Every function takes image or PDF **bytes** — a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, …). Read files or fetch URLs in your own code and pass the bytes; paths and URLs are not accepted as API inputs. A non-bytes input throws a `TypeError`.
+Every function takes image or PDF **bytes** — a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, …). Read files or fetch URLs in your own code and pass the bytes; paths and URLs are not accepted as API inputs. Keep the bytes unchanged until the returned Promise settles or async iteration finishes. A non-bytes input throws a `TypeError`.
 
 ```ts
 import fs from 'node:fs/promises'
@@ -160,7 +160,7 @@ try {
 |---|---|
 | `usage` | Bad input/options (exit 64), or a multi-page PDF passed to `ocr()` (detected by the wrapper — `exitCode` is `null`) |
 | `unavailable` | A feature isn't available on this macOS version |
-| `runtime` | Recognition or I/O failure, or the binary was killed by a signal that wasn't your `AbortSignal` |
+| `runtime` | Recognition or I/O failure, queue capacity exceeded (`code: 'queue_capacity_exceeded'`), or the binary was killed by a signal that wasn't your `AbortSignal` |
 | `internal` | An unexpected CLI failure |
 | `abort` | Cancelled via your `AbortSignal` — never anything else |
 | `spawn` | The binary couldn't be started |
@@ -180,9 +180,11 @@ Queued `ocr()` calls reject immediately when aborted and are removed before thei
 
 Ordinary main-thread `ocr()` calls share one lazily started native service within the current Node process, including calls with an `AbortSignal`. Requests retain independent Promises, cancellation, and errors while Swift executes Vision work serially. The service is unreferenced while idle, so it does not keep Node alive; a crashed service rejects pending work and the next call starts a fresh process.
 
-Worker-thread calls stay one-shot so a native child cannot outlive the worker that launched it. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` also retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
+Worker-thread calls stay one-shot; abort and await active calls before forcibly terminating a worker. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` also retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
 
-Input bytes are copied when `ocr()` is called, preserving invocation-time contents even if the caller later mutates its buffer. The queue stages only its active request in a private temporary file, bounding disk use while avoiding slow large-image transfer through macOS pipes. Node removes the file after each response.
+The queue retains caller-owned input until staging finishes, with admission limited to 64 MiB and 512 unstaged requests. One oversized input is allowed when it is the only unstaged request. Excess submissions reject with `MacOcrError` code `queue_capacity_exceeded`; await earlier calls before retrying. The queue stages only its active request in a private temporary file, and Node removes the file after each response.
+
+Vision work is serial, so submitting a large `Promise.all()` burst does not improve OCR throughput. Prefer a serial loop or an application-level concurrency limit.
 
 ## Tree-shaking
 

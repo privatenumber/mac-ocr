@@ -97,14 +97,6 @@ await describe('requests', async () => {
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('snapshots mutable input bytes before queueing', async () => {
-		const input = fixtureData('hello.png');
-		const resultPromise = ocr(input);
-		input.fill(0);
-		const result = await resultPromise;
-		expect(result.text).toContain('Hello World');
-	});
-
 	await test('normalizes protocol strings to well-formed Unicode', async () => {
 		const pid = await ensureServiceForTesting();
 		const result = await ocr(fixtureData('hello.png'), { password: '\uD800' });

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isMainThread } from 'node:worker_threads';
 import { buildArgs } from '../args.ts';
+import { MacOcrError } from '../errors.ts';
 import { toBuffer } from '../process.ts';
 import type { Input, OcrOptions, OcrResult } from '../types.ts';
 import {
@@ -19,7 +20,8 @@ export {
 } from './native.ts';
 
 type QueuedOcrRequest = {
-	buffer: Buffer;
+	buffer?: Buffer;
+	retainedBytes: number;
 	arguments: string[];
 	password?: string;
 	signal?: AbortSignal;
@@ -31,6 +33,11 @@ type QueuedOcrRequest = {
 let serviceEnabled = true;
 const queuedOcrRequests: QueuedOcrRequest[] = [];
 let serviceQueueRunning = false;
+let unstagedInputBytes = 0;
+let unstagedInputCount = 0;
+
+const maxUnstagedInputBytes = 64 * 1024 * 1024;
+const maxUnstagedInputCount = 512;
 
 const removeStagedInput = async (inputPath: string, suppressFailure: boolean): Promise<void> => {
 	try {
@@ -42,21 +49,26 @@ const removeStagedInput = async (inputPath: string, suppressFailure: boolean): P
 	}
 };
 
+const releaseRequestInput = (request: QueuedOcrRequest): void => {
+	if (request.buffer) {
+		request.buffer = undefined;
+		unstagedInputBytes -= request.retainedBytes;
+		unstagedInputCount -= 1;
+	}
+};
+
 const rejectQueuedOcrRequests = (error: unknown): void => {
 	for (const request of queuedOcrRequests.splice(0)) {
 		if (request.signal && request.settleAbortListener) {
 			request.signal.removeEventListener('abort', request.settleAbortListener);
 		}
+		releaseRequestInput(request);
 		request.reject(error);
 	}
 };
 
-const runQueuedOcr = async (
-	buffer: Buffer,
-	arguments_: string[],
-	password?: string,
-	signal?: AbortSignal,
-): Promise<OcrResult> => {
+const runQueuedOcr = async (request: QueuedOcrRequest): Promise<OcrResult> => {
+	const { signal } = request;
 	let inputPath: string | undefined;
 	let primaryError: unknown;
 	try {
@@ -69,8 +81,11 @@ const runQueuedOcr = async (
 		}
 		const inputName = crypto.randomUUID();
 		inputPath = path.join(service.inputDirectory, inputName);
+		if (!request.buffer) {
+			throw new MacOcrError('mac-ocr OCR queue lost its input buffer', { kind: 'internal' });
+		}
 		try {
-			await fs.writeFile(inputPath, buffer, {
+			await fs.writeFile(inputPath, request.buffer, {
 				flag: 'wx',
 				mode: 0o600,
 				signal,
@@ -80,12 +95,15 @@ const runQueuedOcr = async (
 				throw serviceAbortFailure();
 			}
 			throw serviceInputFailure(error);
+		} finally {
+			releaseRequestInput(request);
 		}
-		return await service.request(inputName, arguments_, password, signal);
+		return await service.request(inputName, request.arguments, request.password, signal);
 	} catch (error) {
 		primaryError = error;
 		throw error;
 	} finally {
+		releaseRequestInput(request);
 		if (inputPath) {
 			await removeStagedInput(inputPath, primaryError !== undefined);
 		}
@@ -104,12 +122,7 @@ const drainServiceQueue = async (): Promise<void> => {
 		while (queuedOcrRequests.length > 0) {
 			const request = queuedOcrRequests.shift()!;
 			try {
-				const result = await runQueuedOcr(
-					request.buffer,
-					request.arguments,
-					request.password,
-					request.signal,
-				);
+				const result = await runQueuedOcr(request);
 				request.resolve(result);
 			} catch (error) {
 				request.reject(error);
@@ -130,10 +143,28 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 	if (signal?.aborted) {
 		throw serviceAbortFailure();
 	}
-	const buffer = Buffer.from(inputBuffer);
+	const retainedBytes = inputBuffer.byteLength;
+	if (
+		unstagedInputCount >= maxUnstagedInputCount
+		|| (
+			unstagedInputCount > 0
+			&& unstagedInputBytes + retainedBytes > maxUnstagedInputBytes
+		)
+	) {
+		throw new MacOcrError(
+			`mac-ocr OCR queue capacity exceeded (${unstagedInputCount}/${maxUnstagedInputCount} requests, ${unstagedInputBytes}/${maxUnstagedInputBytes} bytes retained)`,
+			{
+				kind: 'runtime',
+				code: 'queue_capacity_exceeded',
+			},
+		);
+	}
+	unstagedInputBytes += retainedBytes;
+	unstagedInputCount += 1;
 	const { promise, resolve, reject } = Promise.withResolvers<OcrResult>();
 	const request: QueuedOcrRequest = {
-		buffer,
+		buffer: inputBuffer,
+		retainedBytes,
 		arguments: arguments_,
 		password,
 		signal,
@@ -143,10 +174,12 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 	if (signal) {
 		request.settleAbortListener = () => {
 			const index = queuedOcrRequests.indexOf(request);
-			if (index !== -1) {
-				queuedOcrRequests.splice(index, 1);
-				removeQueuedAbortListener(request);
+			if (index === -1) {
+				return;
 			}
+			queuedOcrRequests.splice(index, 1);
+			removeQueuedAbortListener(request);
+			releaseRequestInput(request);
 			request.reject(serviceAbortFailure());
 		};
 		signal.addEventListener('abort', request.settleAbortListener, { once: true });

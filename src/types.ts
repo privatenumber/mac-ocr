@@ -1,4 +1,4 @@
-/** Image or PDF bytes. Read files or fetch URLs in your own code and pass the bytes. */
+/** Image or PDF bytes. Keep them unchanged until the consuming operation finishes. */
 export type Input = Buffer | Uint8Array | ArrayBuffer;
 
 /** Normalized 0–1 rectangle, top-left origin. */
