@@ -1,14 +1,15 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { describe, expect, test } from 'manten';
-import { ocr } from '../../../src/index.ts';
 import {
 	servicePidForTesting,
 	stopService,
 } from '../../../src/service/index.ts';
-import { fixtureData } from '../../utils.ts';
 import { serviceDirectories, waitFor } from './utils.ts';
 
 const processExists = (pid: number): boolean => {
@@ -22,12 +23,17 @@ const processExists = (pid: number): boolean => {
 
 await describe('ownership', async () => {
 	await test('stops and removes staged inputs when its Node parent exits', async () => {
+		stopService();
+		await waitFor(
+			() => servicePidForTesting() === undefined,
+			'Expected no cleanup service before the ownership test',
+		);
 		const indexUrl = pathToFileURL(new URL('../../../src/index.ts', import.meta.url).pathname).href;
 		const serviceUrl = pathToFileURL(
 			new URL('../../../src/service/index.ts', import.meta.url).pathname,
 		).href;
 		const fixtureUrl = pathToFileURL(
-			new URL('../../fixtures/hello.png', import.meta.url).pathname,
+			new URL('../../fixtures/document-photo.png', import.meta.url).pathname,
 		).href;
 		const script = `
 import fs from 'node:fs/promises'
@@ -52,32 +58,37 @@ process.exit(0)
 				parent.once('close', code => reject(new Error(`Helper exited ${code}: ${stderr}`)));
 			});
 			expect(servicePid).toBeGreaterThan(0);
-
-			// Start a cleanup owner while the helper PID is still live, then let its
-			// delayed sweep observe the helper service after that PID exits.
-			stopService();
-			const cleanupRequest = ocr(fixtureData('hello.png'));
+			let serviceDirectory: string | undefined;
 			await waitFor(
-				() => servicePidForTesting() !== undefined,
-				'Expected the cleanup service to start',
+				async () => {
+					const directories = await serviceDirectories();
+					serviceDirectory = directories.find(
+						name => name.startsWith(`mac-ocr-service-${servicePid}-`),
+					);
+					if (!serviceDirectory) {
+						return false;
+					}
+					const stagedInputs = await fs.readdir(path.join(os.tmpdir(), serviceDirectory));
+					return stagedInputs.length > 0;
+				},
+				'Expected active work to have a staged input',
 			);
 			const close = once(parent, 'close');
 			parent.stdin.end();
 			const [code] = await close;
 			expect(code).toBe(0);
-			await cleanupRequest;
 			await waitFor(
 				() => !processExists(servicePid),
 				'Expected the orphaned service process to stop',
+				7000,
 			);
 			await waitFor(
 				async () => {
 					const directories = await serviceDirectories();
-					return !directories.some(
-						name => name.startsWith(`mac-ocr-service-${servicePid}-`),
-					);
+					return !serviceDirectory || !directories.includes(serviceDirectory);
 				},
 				'Expected the orphaned service directory to be removed',
+				7000,
 			);
 		} finally {
 			if (parent.exitCode === null) {

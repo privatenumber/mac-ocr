@@ -5,6 +5,10 @@ import MacOcrCore
 
 private let serviceMaxFrameBytes = 64 * 1024 * 1024
 private let serviceInputDirectoryPrefix = "mac-ocr-service-"
+private let serviceParentPollNanoseconds: UInt64 = 250_000_000
+private let serviceParentCleanupGraceNanoseconds: UInt64 = 2_000_000_000
+private let serviceParentCleanupAttempts = 30
+private let serviceParentCleanupRetryNanoseconds: UInt64 = 100_000_000
 
 private struct ServiceHello: Encodable {
 	let type = "hello"
@@ -46,6 +50,25 @@ private struct ServiceResponse: Encodable {
 	let type: String
 	let result: ServiceResult?
 	let error: ServiceError?
+}
+
+private final class ServiceResponseControl: @unchecked Sendable {
+	private let lock = NSLock()
+	private var enabled = true
+
+	func suppress() {
+		lock.withLock {
+			enabled = false
+		}
+	}
+
+	func write(_ response: ServiceResponse) throws {
+		try lock.withLock {
+			if enabled {
+				try writeServiceFrame(response)
+			}
+		}
+	}
 }
 
 private func readServiceData(count: Int) throws -> Data? {
@@ -121,7 +144,20 @@ private func cleanStaleServiceInputDirectories() {
 private func monitorServiceParent(_ parent: pid_t, inputDirectory: URL) {
 	Task.detached(priority: .background) {
 		while getppid() == parent {
-			try? await Task.sleep(nanoseconds: 1_000_000_000)
+			try? await Task.sleep(nanoseconds: serviceParentPollNanoseconds)
+		}
+		// Give stdin EOF time to cancel active Vision work and run normal defers.
+		try? await Task.sleep(nanoseconds: serviceParentCleanupGraceNanoseconds)
+		for _ in 0..<serviceParentCleanupAttempts {
+			if !FileManager.default.fileExists(atPath: inputDirectory.path) {
+				Darwin.exit(1)
+			}
+			do {
+				try FileManager.default.removeItem(at: inputDirectory)
+				Darwin.exit(1)
+			} catch {
+				try? await Task.sleep(nanoseconds: serviceParentCleanupRetryNanoseconds)
+			}
 		}
 		try? FileManager.default.removeItem(at: inputDirectory)
 		Darwin.exit(1)
@@ -242,7 +278,8 @@ private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
 
 private func processServiceRequest(
 	request: ServiceRequest,
-	inputDirectory: URL
+	inputDirectory: URL,
+	responseControl: ServiceResponseControl
 ) async throws {
 	let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
 	let response: ServiceResponse
@@ -265,7 +302,7 @@ private func processServiceRequest(
 			error: serviceError(error, inputPath: inputPath)
 		)
 	}
-	try writeServiceFrame(response)
+	try responseControl.write(response)
 }
 
 private func terminateService(_ error: Error) -> Never {
@@ -301,7 +338,12 @@ public enum OCRService {
 				inputDirectory: inputDirectory.path
 			))
 		let decoder = JSONDecoder()
-		var activeRequest: (id: UInt32, task: Task<Void, Never>)?
+		var activeRequest:
+			(
+				id: UInt32,
+				task: Task<Void, Never>,
+				responseControl: ServiceResponseControl
+			)?
 		while let frame = try readServiceFrame() {
 			let request = try decoder.decode(ServiceRequest.self, from: frame)
 			switch request.command {
@@ -313,22 +355,29 @@ public enum OCRService {
 				if let activeRequest {
 					await activeRequest.task.value
 				}
+				let responseControl = ServiceResponseControl()
 				let task = Task {
 					do {
 						try await processServiceRequest(
 							request: request,
-							inputDirectory: inputDirectory
+							inputDirectory: inputDirectory,
+							responseControl: responseControl
 						)
 					} catch {
 						terminateService(error)
 					}
 				}
-				activeRequest = (id: request.id, task: task)
+				activeRequest = (
+					id: request.id,
+					task: task,
+					responseControl: responseControl
+				)
 			default:
 				throw UsageError("Unsupported service command: \(request.command)")
 			}
 		}
 		if let activeRequest {
+			activeRequest.responseControl.suppress()
 			activeRequest.task.cancel()
 			await activeRequest.task.value
 		}

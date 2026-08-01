@@ -8,8 +8,9 @@ import { fixtureData } from '../../utils.ts';
 export const waitFor = async (
 	condition: () => boolean | Promise<boolean>,
 	message: string,
+	timeoutMilliseconds = 2000,
 ): Promise<void> => {
-	const deadline = Date.now() + 2000;
+	const deadline = Date.now() + timeoutMilliseconds;
 	while (!await condition() && Date.now() < deadline) {
 		await delay(20);
 	}
