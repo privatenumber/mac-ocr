@@ -33,11 +33,28 @@ type QueuedOcrRequest = {
 let serviceEnabled = true;
 const queuedOcrRequests: QueuedOcrRequest[] = [];
 let serviceQueueRunning = false;
-let unstagedInputBytes = 0;
-let unstagedInputCount = 0;
+let unstagedRequestBytes = 0;
+let unstagedRequestCount = 0;
 
-const maxUnstagedInputBytes = 64 * 1024 * 1024;
-const maxUnstagedInputCount = 512;
+const maxUnstagedRequestBytes = 64 * 1024 * 1024;
+const maxUnstagedRequestCount = 512;
+
+const estimateRetainedMetadataBytes = (arguments_: string[], password?: string): number => {
+	let retainedBytes = arguments_.length * 8;
+	for (const argument of arguments_) {
+		retainedBytes += Math.max(
+			argument.length * 2,
+			Buffer.byteLength(JSON.stringify(argument)),
+		);
+	}
+	if (password !== undefined) {
+		retainedBytes += Math.max(
+			password.length * 2,
+			Buffer.byteLength(JSON.stringify(password)),
+		);
+	}
+	return retainedBytes;
+};
 
 const removeStagedInput = async (inputPath: string, suppressFailure: boolean): Promise<void> => {
 	try {
@@ -52,8 +69,8 @@ const removeStagedInput = async (inputPath: string, suppressFailure: boolean): P
 const releaseRequestInput = (request: QueuedOcrRequest): void => {
 	if (request.buffer) {
 		request.buffer = undefined;
-		unstagedInputBytes -= request.retainedBytes;
-		unstagedInputCount -= 1;
+		unstagedRequestBytes -= request.retainedBytes;
+		unstagedRequestCount -= 1;
 	}
 };
 
@@ -143,24 +160,31 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 	if (signal?.aborted) {
 		throw serviceAbortFailure();
 	}
-	const retainedBytes = inputBuffer.buffer.byteLength;
+	const retainedInputBytes = inputBuffer.buffer.byteLength;
+	const retainedMetadataBytes = estimateRetainedMetadataBytes(arguments_, password);
+	const retainedBytes = retainedInputBytes + retainedMetadataBytes;
+	const allowsOversizedInput = (
+		unstagedRequestCount === 0
+		&& retainedInputBytes > maxUnstagedRequestBytes
+		&& retainedMetadataBytes <= maxUnstagedRequestBytes
+	);
 	if (
-		unstagedInputCount >= maxUnstagedInputCount
+		unstagedRequestCount >= maxUnstagedRequestCount
 		|| (
-			unstagedInputCount > 0
-			&& unstagedInputBytes + retainedBytes > maxUnstagedInputBytes
+			unstagedRequestBytes + retainedBytes > maxUnstagedRequestBytes
+			&& !allowsOversizedInput
 		)
 	) {
 		throw new MacOcrError(
-			`mac-ocr OCR queue capacity exceeded (${unstagedInputCount}/${maxUnstagedInputCount} requests, ${unstagedInputBytes}/${maxUnstagedInputBytes} bytes retained)`,
+			`mac-ocr OCR queue capacity exceeded (${unstagedRequestCount}/${maxUnstagedRequestCount} requests, ${unstagedRequestBytes}/${maxUnstagedRequestBytes} bytes retained)`,
 			{
 				kind: 'runtime',
 				code: 'queue_capacity_exceeded',
 			},
 		);
 	}
-	unstagedInputBytes += retainedBytes;
-	unstagedInputCount += 1;
+	unstagedRequestBytes += retainedBytes;
+	unstagedRequestCount += 1;
 	const { promise, resolve, reject } = Promise.withResolvers<OcrResult>();
 	const request: QueuedOcrRequest = {
 		buffer: inputBuffer,

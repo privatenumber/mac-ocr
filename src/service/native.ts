@@ -54,6 +54,7 @@ type ExitStatus = {
 };
 
 const transportCloseGraceMilliseconds = 5000;
+const maxRetainedStderrBytes = 64 * 1024;
 
 // Callback identity prevents a stopped service from clearing its replacement.
 let serviceState: ServiceState | undefined;
@@ -70,10 +71,11 @@ const startNativeService = (
 		state.startingPid = subprocess.pid;
 	}
 	let pending: PendingRequest | undefined;
-	const stderrChunks: Buffer[] = [];
+	let retainedStderr = Buffer.alloc(0);
 	let nextRequestId = 0;
 	let ready = false;
 	let closed = false;
+	let protocolFailed = false;
 	let rejectQueueOnClose = true;
 	let failureOverride: MacOcrError | undefined;
 	let transportError: unknown;
@@ -87,7 +89,19 @@ const startNativeService = (
 		(subprocess.stderr as typeof subprocess.stderr & { unref?: () => void }).unref?.();
 	};
 
-	const stderrText = (): string => Buffer.concat(stderrChunks).toString('utf8').trim();
+	const stderrText = (): string => retainedStderr.toString('utf8').trim();
+	const retainStderr = (chunk: Buffer): void => {
+		const retainedBytes = Math.min(
+			maxRetainedStderrBytes,
+			retainedStderr.byteLength + chunk.byteLength,
+		);
+		const nextStderr = Buffer.allocUnsafe(retainedBytes);
+		const chunkBytes = Math.min(chunk.byteLength, retainedBytes);
+		const previousBytes = retainedBytes - chunkBytes;
+		retainedStderr.copy(nextStderr, 0, retainedStderr.byteLength - previousBytes);
+		chunk.copy(nextStderr, previousBytes, chunk.byteLength - chunkBytes);
+		retainedStderr = nextStderr;
+	};
 	const detachStartupAbortListener = (): void => {
 		if (startupSignal && startupAbortListener) {
 			startupSignal.removeEventListener('abort', startupAbortListener);
@@ -160,6 +174,10 @@ const startNativeService = (
 		}
 	};
 	const failProtocol = (message: string): void => {
+		if (protocolFailed) {
+			return;
+		}
+		protocolFailed = true;
 		const error = new Error(message);
 		failureOverride = serviceFailure(message, stderrText(), error);
 		subprocess.kill('SIGKILL');
@@ -180,11 +198,11 @@ const startNativeService = (
 			}
 		});
 	};
-	const handleResponse = (response: NativeResponse): void => {
+	const handleResponse = (response: NativeResponse): boolean => {
 		const request = pending;
 		if (!request || request.id !== response.id) {
 			failProtocol(`mac-ocr service returned unknown request ID ${response.id}`);
-			return;
+			return false;
 		}
 		pending = undefined;
 		if (request.signal && request.cancelAbortListener) {
@@ -193,11 +211,11 @@ const startNativeService = (
 		subprocess.unref();
 		if (request.signal?.aborted) {
 			request.reject(serviceAbortFailure(response.type === 'error' ? response.error.stderr : ''));
-			return;
+			return true;
 		}
 		if (response.type === 'result') {
 			request.resolve(response.result);
-			return;
+			return true;
 		}
 		request.reject(new MacOcrError(response.error.message, {
 			kind: response.error.kind,
@@ -205,8 +223,12 @@ const startNativeService = (
 			exitCode: response.error.exitCode,
 			stderr: response.error.stderr,
 		}));
+		return true;
 	};
 	const handleFrame = (frame: Buffer): boolean => {
+		if (protocolFailed) {
+			return false;
+		}
 		let value: unknown;
 		try {
 			value = JSON.parse(frame.toString('utf8')) as unknown;
@@ -226,8 +248,7 @@ const startNativeService = (
 			failProtocol('mac-ocr service produced an invalid response frame');
 			return false;
 		}
-		handleResponse(value);
-		return !closed;
+		return handleResponse(value) && !closed;
 	};
 	service = {
 		pid: subprocess.pid!,
@@ -332,7 +353,7 @@ const startNativeService = (
 		}
 	}
 
-	subprocess.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+	subprocess.stderr.on('data', retainStderr);
 	subprocess.stdout.on('data', createFrameDecoder(handleFrame, failProtocol));
 	subprocess.stdin.once('error', recordTransportError);
 	subprocess.once('error', error => close(error, !ready));

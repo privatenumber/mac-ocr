@@ -55,6 +55,82 @@ process.stdin.on('data', chunk => {
 		}
 	});
 
+	await test('rejects every response after an unknown request ID', async () => {
+		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const frame = value => {
+  const payload = Buffer.from(JSON.stringify(value))
+  const header = Buffer.alloc(4)
+  header.writeUInt32LE(payload.length)
+  return Buffer.concat([header, payload])
+}
+process.stdout.write(frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory }))
+process.stdin.once('data', chunk => {
+  const length = chunk.readUInt32LE(0)
+  const request = JSON.parse(chunk.subarray(4, length + 4))
+  const result = { page: 1, pageCount: 1, width: 1, height: 1, text: 'invalid success', observations: [] }
+  process.stdout.write(Buffer.concat([
+    frame({ id: request.id + 1, type: 'result', result }),
+    frame({ id: request.id, type: 'result', result }),
+  ]))
+})
+setTimeout(() => {}, 30_000)
+`, { service: true });
+		try {
+			const outcome = await wrapper.api.ocr(Buffer.from('x')).catch((error: unknown) => error);
+			expect(outcome).toMatchObject({ kind: 'runtime' });
+			expect((outcome as Error).message).toMatch(/unknown request ID/);
+		} finally {
+			wrapper.serviceApi.stopService();
+		}
+	});
+
+	await test('bounds stderr retained across service requests', async () => {
+		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const frame = value => {
+  const payload = Buffer.from(JSON.stringify(value))
+  const header = Buffer.alloc(4)
+  header.writeUInt32LE(payload.length)
+  process.stdout.write(Buffer.concat([header, payload]))
+}
+frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
+const diagnostic = Buffer.alloc(1024 * 1024, 120)
+let requestCount = 0
+process.stdin.on('data', chunk => {
+  const length = chunk.readUInt32LE(0)
+  const request = JSON.parse(chunk.subarray(4, length + 4))
+  requestCount += 1
+  process.stderr.write(diagnostic, () => {
+    if (requestCount === 5) {
+      process.exit(1)
+    }
+    frame({
+      id: request.id,
+      type: 'result',
+      result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
+    })
+  })
+})
+`, { service: true });
+		for (let index = 0; index < 4; index += 1) {
+			await wrapper.api.ocr(Buffer.from('x'));
+		}
+		const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
+		expect(error).toMatchObject({ kind: 'runtime' });
+		expect(Buffer.byteLength((error as { stderr: string }).stderr)).toBeLessThanOrEqual(64 * 1024);
+	});
+
 	await test('releases oversized frame buffers after draining', async () => {
 		const protocolUrl = new URL('../../../src/service/protocol.ts', import.meta.url).href;
 		const source = `

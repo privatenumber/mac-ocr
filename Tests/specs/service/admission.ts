@@ -50,6 +50,29 @@ await describe('admission', async () => {
 		}
 	});
 
+	await test('accounts for metadata retained by queued requests', async () => {
+		await using wrapper = await importWrapper(stalledService, { service: true });
+		const requests = Array.from(
+			{ length: 33 },
+			(_, index) => wrapper.api.ocr(Buffer.alloc(0), {
+				customWords: [String.fromCodePoint(33 + index).repeat(1024 * 1024)],
+			}).catch((error: unknown) => error),
+		);
+		try {
+			const outcome = await Promise.race([
+				requests.at(-1)!,
+				delay(100, 'pending'),
+			]);
+			expect(outcome).toMatchObject({
+				kind: 'runtime',
+				code: 'queue_capacity_exceeded',
+			});
+		} finally {
+			wrapper.serviceApi.stopService();
+			await Promise.all(requests);
+		}
+	});
+
 	await test('rejects queued requests beyond the count budget', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const requests = Array.from(
