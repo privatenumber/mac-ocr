@@ -63,7 +63,7 @@ const runQueuedOcr = async (
 		if (signal?.aborted) {
 			throw serviceAbortFailure();
 		}
-		const service = await getNativeService(rejectQueuedOcrRequests);
+		const service = await getNativeService(rejectQueuedOcrRequests, signal);
 		if (signal?.aborted) {
 			throw serviceAbortFailure();
 		}

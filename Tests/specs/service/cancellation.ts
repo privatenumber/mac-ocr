@@ -1,12 +1,22 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import fs from 'node:fs/promises';
 import { describe, expect, test } from 'manten';
 import { ocr } from '../../../src/index.ts';
 import {
 	pendingServiceRequestsForTesting,
 	servicePidForTesting,
 } from '../../../src/service/index.ts';
-import { fixtureData } from '../../utils.ts';
+import { fixtureData, importWrapper } from '../../utils.ts';
 import { ensureServiceForTesting, waitFor } from './utils.ts';
+
+const processExists = (pid: number): boolean => {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+};
 
 await describe('cancellation', async () => {
 	await test('rejects a pre-aborted service request', async () => {
@@ -19,6 +29,71 @@ await describe('cancellation', async () => {
 		).catch((error_: unknown) => error_);
 		expect(error).toMatchObject({ kind: 'abort' });
 		expect(servicePidForTesting()).toBe(pid);
+	});
+
+	await test('aborts a stalled startup without blocking the next request', async () => {
+		await using wrapper = await importWrapper(`#!/usr/bin/env node
+setTimeout(() => {}, 30_000)
+`, { service: true });
+		try {
+			const controller = new AbortController();
+			const first = wrapper.api.ocr(
+				Buffer.from('first'),
+				{ signal: controller.signal },
+			).catch((error: unknown) => error);
+			await waitFor(
+				() => wrapper.serviceApi.startingServicePidForTesting() !== undefined,
+				'Expected the stalled service process to start',
+			);
+			const firstPid = wrapper.serviceApi.startingServicePidForTesting()!;
+			await fs.writeFile(wrapper.binaryPath, `#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const frame = value => {
+  const payload = Buffer.from(JSON.stringify(value))
+  const header = Buffer.alloc(4)
+  header.writeUInt32LE(payload.length)
+  process.stdout.write(Buffer.concat([header, payload]))
+}
+frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
+let buffered = Buffer.alloc(0)
+process.stdin.on('data', chunk => {
+  buffered = Buffer.concat([buffered, chunk])
+  while (buffered.length >= 4) {
+    const length = buffered.readUInt32LE(0)
+    if (buffered.length < length + 4) return
+    const request = JSON.parse(buffered.subarray(4, length + 4))
+    buffered = buffered.subarray(length + 4)
+    if (request.command === 'ocr') {
+      frame({
+        id: request.id,
+        type: 'result',
+        result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
+      })
+    }
+  }
+})
+process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
+`);
+			const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
+			controller.abort();
+			expect(await first).toMatchObject({ kind: 'abort' });
+			await waitFor(
+				() => !processExists(firstPid),
+				'Expected the aborted startup process to stop',
+			);
+			const result = await Promise.race([
+				second,
+				delay(2000, 'timeout'),
+			]);
+			expect(result).toMatchObject({ text: 'ok' });
+		} finally {
+			wrapper.serviceApi.stopService();
+		}
 	});
 
 	await test('removes an aborted queued request before staging', async () => {

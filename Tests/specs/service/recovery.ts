@@ -50,6 +50,31 @@ await describe('recovery', async () => {
 		expect((error as Error).message).toMatch(/code 7/);
 	});
 
+	await test('preserves exit status after a request write fails', async () => {
+		await using wrapper = await importWrapper(`#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const payload = Buffer.from(JSON.stringify({ type: 'hello', protocolVersion: 1, inputDirectory: directory }))
+const header = Buffer.alloc(4)
+header.writeUInt32LE(payload.length)
+process.stdout.write(Buffer.concat([header, payload]), () => {
+  fs.closeSync(0)
+  setTimeout(() => process.exit(7), 1000)
+})
+process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
+`, { service: true });
+		const error = await wrapper.api.ocr(Buffer.from('dummy')).catch((error_: unknown) => error_);
+		expect(error).toMatchObject({
+			kind: 'runtime',
+			exitCode: 7,
+		});
+		expect((error as Error).message).toMatch(/code 7/);
+	});
+
 	await test('rejects pending work and lazily restarts after a crash', async () => {
 		const pid = await ensureServiceForTesting();
 		const pending = Array.from(

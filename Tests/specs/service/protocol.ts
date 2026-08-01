@@ -13,6 +13,7 @@ setTimeout(() => {}, 30_000)
 		const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
 		expect(error).toMatchObject({ kind: 'runtime' });
+		expect((error as Error).message).toMatch(/invalid hello frame/);
 	});
 
 	await test('keeps stderr scoped to its structured response', async () => {

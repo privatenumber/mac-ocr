@@ -53,12 +53,15 @@ type ExitStatus = {
 	signal: NodeJS.Signals | null;
 };
 
+const transportCloseGraceMilliseconds = 5000;
+
 // Callback identity prevents a stopped service from clearing its replacement.
 let serviceState: ServiceState | undefined;
 
 const startNativeService = (
 	state: ServiceState,
 	rejectQueuedRequests: RejectQueuedRequests,
+	startupSignal?: AbortSignal,
 ): Promise<NativeService> => new Promise((_resolve, _reject) => {
 	const subprocess = childProcess.spawn(binaryPath, [`--service=${protocolVersion}`], {
 		stdio: ['pipe', 'pipe', 'pipe'],
@@ -71,6 +74,11 @@ const startNativeService = (
 	let nextRequestId = 0;
 	let ready = false;
 	let closed = false;
+	let rejectQueueOnClose = true;
+	let failureOverride: MacOcrError | undefined;
+	let transportError: unknown;
+	let forceExitTimer: NodeJS.Timeout | undefined;
+	let startupAbortListener: (() => void) | undefined;
 	let service: NativeService;
 	const unrefIdleHandles = (): void => {
 		subprocess.unref();
@@ -80,6 +88,22 @@ const startNativeService = (
 	};
 
 	const stderrText = (): string => Buffer.concat(stderrChunks).toString('utf8').trim();
+	const detachStartupAbortListener = (): void => {
+		if (startupSignal && startupAbortListener) {
+			startupSignal.removeEventListener('abort', startupAbortListener);
+			startupAbortListener = undefined;
+		}
+	};
+	const recordTransportError = (error: unknown): void => {
+		if (closed) {
+			return;
+		}
+		transportError ??= error;
+		if (!forceExitTimer) {
+			forceExitTimer = setTimeout(() => subprocess.kill('SIGKILL'), transportCloseGraceMilliseconds);
+			forceExitTimer.unref();
+		}
+	};
 	const rejectPending = (error: unknown): void => {
 		if (!pending) {
 			return;
@@ -100,6 +124,11 @@ const startNativeService = (
 			return;
 		}
 		closed = true;
+		detachStartupAbortListener();
+		if (forceExitTimer) {
+			clearTimeout(forceExitTimer);
+			forceExitTimer = undefined;
+		}
 		if (service?.inputDirectory) {
 			// Swift owns normal cleanup; Node covers crashes before Swift's defer runs.
 			fs.rm(service.inputDirectory, {
@@ -116,10 +145,12 @@ const startNativeService = (
 			message = `mac-ocr service exited with code ${exitStatus.code}`;
 			exitCode = exitStatus.code;
 		}
-		const failure = didFailToSpawn
+		const failure = failureOverride ?? (didFailToSpawn
 			? serviceSpawnFailure(error, stderrText())
-			: serviceFailure(message, stderrText(), error, exitCode);
-		rejectQueuedRequests(failure);
+			: serviceFailure(message, stderrText(), error ?? transportError, exitCode));
+		if (rejectQueueOnClose) {
+			rejectQueuedRequests(failure);
+		}
 		rejectPending(failure);
 		if (!ready) {
 			_reject(failure);
@@ -129,11 +160,13 @@ const startNativeService = (
 		}
 	};
 	const failProtocol = (message: string): void => {
-		close(new Error(message));
-		subprocess.kill();
+		const error = new Error(message);
+		failureOverride = serviceFailure(message, stderrText(), error);
+		subprocess.kill('SIGKILL');
 	};
 	const handleHello = (hello: NativeHello): void => {
 		ready = true;
+		detachStartupAbortListener();
 		service.inputDirectory = hello.inputDirectory;
 		if (serviceState === state) {
 			state.stopStarting = undefined;
@@ -210,6 +243,10 @@ const startNativeService = (
 				reject(serviceFailure('mac-ocr service is not running', stderrText()));
 				return;
 			}
+			if (transportError) {
+				reject(serviceFailure('mac-ocr service transport failed', stderrText(), transportError));
+				return;
+			}
 			if (signal?.aborted) {
 				reject(serviceAbortFailure());
 				return;
@@ -242,7 +279,7 @@ const startNativeService = (
 					});
 					subprocess.stdin.write(cancelFrame, (error) => {
 						if (error) {
-							close(error);
+							recordTransportError(error);
 						}
 					});
 				};
@@ -261,7 +298,7 @@ const startNativeService = (
 			subprocess.ref();
 			subprocess.stdin.write(frame, (error) => {
 				if (error) {
-					close(error);
+					recordTransportError(error);
 				}
 			});
 		}),
@@ -275,24 +312,44 @@ const startNativeService = (
 	if (serviceState === state) {
 		state.stopStarting = service.stop;
 	}
+	if (startupSignal) {
+		startupAbortListener = () => {
+			if (ready || closed) {
+				return;
+			}
+			rejectQueueOnClose = false;
+			failureOverride = serviceAbortFailure();
+			subprocess.stdin.destroy();
+			subprocess.stdout.destroy();
+			subprocess.stderr.destroy();
+			subprocess.kill('SIGKILL');
+			subprocess.unref();
+			close();
+		};
+		startupSignal.addEventListener('abort', startupAbortListener, { once: true });
+		if (startupSignal.aborted) {
+			startupAbortListener();
+		}
+	}
 
 	subprocess.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 	subprocess.stdout.on('data', createFrameDecoder(handleFrame, failProtocol));
-	subprocess.stdin.once('error', close);
+	subprocess.stdin.once('error', recordTransportError);
 	subprocess.once('error', error => close(error, !ready));
-	subprocess.once('close', (code, signal) => close(undefined, false, {
+	subprocess.once('close', (code, signalName) => close(undefined, false, {
 		code,
-		signal,
+		signal: signalName,
 	}));
 });
 
 export const getNativeService = (
 	rejectQueuedRequests: RejectQueuedRequests,
+	signal?: AbortSignal,
 ): Promise<NativeService> => {
 	if (!serviceState) {
 		const state: ServiceState = {};
 		serviceState = state;
-		state.promise = startNativeService(state, rejectQueuedRequests).then((service) => {
+		state.promise = startNativeService(state, rejectQueuedRequests, signal).then((service) => {
 			if (serviceState === state) {
 				state.active = service;
 			}
