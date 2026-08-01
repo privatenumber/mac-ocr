@@ -76,6 +76,18 @@ await describe('requests', async () => {
 		expect(servicePidForTesting()).toBe(pid);
 	});
 
+	await test('preserves complete ArgumentParser usage diagnostics', async () => {
+		const error = await ocr(
+			fixtureData('hello.png'),
+			{ confidence: 2 },
+		).catch((error_: unknown) => error_);
+		expect(error).toMatchObject({
+			kind: 'usage',
+			message: '--confidence must be between 0.0 and 1.0\nUsage: mac-ocr ocr [<options>] [<files> ...]\n  See \'mac-ocr ocr --help\' for more information.',
+			stderr: 'Error: --confidence must be between 0.0 and 1.0\nUsage: mac-ocr ocr [<options>] [<files> ...]\n  See \'mac-ocr ocr --help\' for more information.',
+		});
+	});
+
 	await test('reads the ambient PDF password for each request', async () => {
 		const previous = process.env.MAC_OCR_PDF_PASSWORD;
 		process.env.MAC_OCR_PDF_PASSWORD = 'secret';

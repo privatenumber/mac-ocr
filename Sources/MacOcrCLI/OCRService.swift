@@ -214,6 +214,21 @@ private func serviceResult(
 	)
 }
 
+private func serviceUsageError(_ errorMessage: String) -> ServiceError {
+	let message = """
+		\(errorMessage)
+		Usage: \(MacOcr.usageString(for: OCRCommand.self))
+		  See 'mac-ocr ocr --help' for more information.
+		"""
+	return ServiceError(
+		kind: "usage",
+		code: "usage_error",
+		message: message,
+		exitCode: 64,
+		stderr: "Error: \(message)"
+	)
+}
+
 private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
 	if error is CancellationError {
 		return ServiceError(
@@ -225,22 +240,10 @@ private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
 		)
 	}
 	if let error = error as? ValidationError {
-		return ServiceError(
-			kind: "usage",
-			code: "usage_error",
-			message: error.message,
-			exitCode: 64,
-			stderr: "Error: \(error.message)"
-		)
+		return serviceUsageError(error.message)
 	}
 	if let error = error as? UsageError {
-		return ServiceError(
-			kind: "usage",
-			code: "usage_error",
-			message: error.message,
-			exitCode: 64,
-			stderr: "Error: \(error.message)"
-		)
+		return serviceUsageError(error.message)
 	}
 	if let error = error as? ServiceInputUsageError {
 		let message = error.localizedDescription
@@ -254,14 +257,7 @@ private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
 	}
 	let argumentParserExitCode = MacOcr.exitCode(for: error)
 	if argumentParserExitCode == .validationFailure {
-		let message = MacOcr.message(for: error)
-		return ServiceError(
-			kind: "usage",
-			code: "usage_error",
-			message: message,
-			exitCode: argumentParserExitCode.rawValue,
-			stderr: "Error: \(message)"
-		)
+		return serviceUsageError(MacOcr.message(for: error))
 	}
 	let message =
 		inputPath.map {
