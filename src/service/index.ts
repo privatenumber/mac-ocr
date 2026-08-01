@@ -117,6 +117,9 @@ const runQueuedOcr = async (request: QueuedOcrRequest): Promise<OcrResult> => {
 			if (signal?.aborted) {
 				throw serviceAbortFailure();
 			}
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				stopNativeService();
+			}
 			throw serviceInputFailure(error);
 		} finally {
 			releaseRequestInput(request);

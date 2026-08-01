@@ -46,10 +46,13 @@ export const encodeFrame = (value: unknown): Buffer => {
 	return Buffer.concat([header, payload]);
 };
 
-const isServiceInputDirectory = (directory: string): boolean => (
-	path.dirname(directory) === os.tmpdir()
-	&& serviceDirectoryPattern.test(path.basename(directory))
-);
+const isServiceInputDirectory = (directory: string): boolean => {
+	const normalizedDirectory = path.resolve(directory);
+	return (
+		path.dirname(normalizedDirectory) === path.resolve(os.tmpdir())
+		&& serviceDirectoryPattern.test(path.basename(normalizedDirectory))
+	);
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
 	typeof value === 'object'

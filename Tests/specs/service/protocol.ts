@@ -1,9 +1,32 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import path from 'node:path';
 import { describe, expect, test } from 'manten';
+import { isNativeHello } from '../../../src/service/protocol.ts';
 import { importWrapper } from '../../utils.ts';
 
 await describe('protocol', async () => {
+	await test('accepts service directories under a relative TMPDIR', () => {
+		const previous = process.env.TMPDIR;
+		process.env.TMPDIR = '.';
+		try {
+			expect(isNativeHello({
+				type: 'hello',
+				protocolVersion: 1,
+				inputDirectory: path.join(
+					process.cwd(),
+					'mac-ocr-service-123-00000000-0000-0000-0000-000000000000',
+				),
+			})).toBe(true);
+		} finally {
+			if (previous === undefined) {
+				delete process.env.TMPDIR;
+			} else {
+				process.env.TMPDIR = previous;
+			}
+		}
+	});
+
 	await test('rejects malformed protocol frames instead of crashing', async () => {
 		await using wrapper = await importWrapper(`#!/usr/bin/env node
 const payload = Buffer.from('null')

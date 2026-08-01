@@ -103,6 +103,50 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 		);
 	});
 
+	await test('restarts after losing the service input directory', async () => {
+		await using wrapper = await importWrapper(`#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const marker = path.join(__dirname, '.started')
+const firstStart = !fs.existsSync(marker)
+fs.writeFileSync(marker, '')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const frame = value => {
+  const payload = Buffer.from(JSON.stringify(value))
+  const header = Buffer.alloc(4)
+  header.writeUInt32LE(payload.length)
+  process.stdout.write(Buffer.concat([header, payload]))
+}
+frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
+if (firstStart) fs.rmSync(directory, { recursive: true, force: true })
+let buffered = Buffer.alloc(0)
+process.stdin.on('data', chunk => {
+  buffered = Buffer.concat([buffered, chunk])
+  while (buffered.length >= 4) {
+    const length = buffered.readUInt32LE(0)
+    if (buffered.length < length + 4) return
+    const request = JSON.parse(buffered.subarray(4, length + 4))
+    buffered = buffered.subarray(length + 4)
+    if (request.command === 'ocr') {
+      frame({
+        id: request.id,
+        type: 'result',
+        result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'recovered', observations: [] },
+      })
+    }
+  }
+})
+process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
+`, { service: true });
+		const first = await wrapper.api.ocr(Buffer.from('first')).catch((error: unknown) => error);
+		expect(first).toMatchObject({ kind: 'runtime' });
+		const second = await wrapper.api.ocr(Buffer.from('second'));
+		expect(second).toMatchObject({ text: 'recovered' });
+	});
+
 	await test('can stop and lazily restart the internal singleton', async () => {
 		const pid = await ensureServiceForTesting();
 		stopService();
