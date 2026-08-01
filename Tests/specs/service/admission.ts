@@ -27,6 +27,29 @@ await describe('admission', async () => {
 		}
 	});
 
+	await test('accounts for backing storage retained by byte views', async () => {
+		await using wrapper = await importWrapper(stalledService, { service: true });
+		const requests = Array.from(
+			{ length: 33 },
+			() => wrapper.api.ocr(
+				Buffer.alloc(2 * 1024 * 1024).subarray(0, 1),
+			).catch((error: unknown) => error),
+		);
+		try {
+			const outcome = await Promise.race([
+				requests.at(-1)!,
+				delay(100, 'pending'),
+			]);
+			expect(outcome).toMatchObject({
+				kind: 'runtime',
+				code: 'queue_capacity_exceeded',
+			});
+		} finally {
+			wrapper.serviceApi.stopService();
+			await Promise.all(requests);
+		}
+	});
+
 	await test('rejects queued requests beyond the count budget', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const requests = Array.from(

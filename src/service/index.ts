@@ -143,7 +143,7 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 	if (signal?.aborted) {
 		throw serviceAbortFailure();
 	}
-	const retainedBytes = inputBuffer.byteLength;
+	const retainedBytes = inputBuffer.buffer.byteLength;
 	if (
 		unstagedInputCount >= maxUnstagedInputCount
 		|| (

@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { describe, expect, test } from 'manten';
 import { importWrapper } from '../../utils.ts';
 
@@ -51,5 +53,42 @@ process.stdin.on('data', chunk => {
 		} finally {
 			wrapper.serviceApi.stopService();
 		}
+	});
+
+	await test('releases oversized frame buffers after draining', async () => {
+		const protocolUrl = new URL('../../../src/service/protocol.ts', import.meta.url).href;
+		const source = `
+import { createFrameDecoder } from ${JSON.stringify(protocolUrl)}
+globalThis.gc()
+const baseline = process.memoryUsage().arrayBuffers
+let payload = Buffer.alloc(40 * 1024 * 1024)
+const header = Buffer.alloc(4)
+header.writeUInt32LE(payload.length)
+let frame = Buffer.concat([header, payload])
+const decode = createFrameDecoder(() => true, message => { throw new Error(message) })
+decode(frame)
+payload = undefined
+frame = undefined
+globalThis.gc()
+process.stdout.write(String(process.memoryUsage().arrayBuffers - baseline))
+`;
+		const child = spawn(process.execPath, [
+			'--expose-gc',
+			'--input-type=module',
+			'--eval',
+			source,
+		]);
+		let stdout = '';
+		let stderr = '';
+		child.stdout.on('data', (chunk) => {
+			stdout += chunk;
+		});
+		child.stderr.on('data', (chunk) => {
+			stderr += chunk;
+		});
+		const [code] = await once(child, 'close');
+		expect(code).toBe(0);
+		expect(stderr).toBe('');
+		expect(Number(stdout)).toBeLessThan(5 * 1024 * 1024);
 	});
 });

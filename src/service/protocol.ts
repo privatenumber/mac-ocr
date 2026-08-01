@@ -5,6 +5,7 @@ import type { OcrResult } from '../types.ts';
 
 export const protocolVersion = 1;
 const maxFrameBytes = 64 * 1024 * 1024;
+const initialFrameBufferBytes = 16 * 1024;
 const serviceDirectoryPattern = /^mac-ocr-service-\d+-[0-9A-Fa-f-]{36}$/;
 
 export type NativeHello = {
@@ -117,7 +118,7 @@ export const createFrameDecoder = (
 	onFrame: (frame: Buffer) => boolean,
 	onFailure: (message: string) => void,
 ): ((chunk: Buffer) => void) => {
-	let stdout = Buffer.allocUnsafe(16 * 1024);
+	let stdout = Buffer.allocUnsafe(initialFrameBufferBytes);
 	let stdoutUsed = 0;
 	return (chunk) => {
 		const required = stdoutUsed + chunk.byteLength;
@@ -147,6 +148,12 @@ export const createFrameDecoder = (
 		if (offset > 0) {
 			stdout.copyWithin(0, offset, stdoutUsed);
 			stdoutUsed -= offset;
+		}
+		const retainedCapacity = Math.max(initialFrameBufferBytes, stdoutUsed * 2);
+		if (stdout.byteLength > retainedCapacity) {
+			const compact = Buffer.allocUnsafe(retainedCapacity);
+			stdout.copy(compact, 0, 0, stdoutUsed);
+			stdout = compact;
 		}
 	};
 };

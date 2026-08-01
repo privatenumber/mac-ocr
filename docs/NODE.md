@@ -182,7 +182,7 @@ Ordinary main-thread `ocr()` calls share one lazily started native service withi
 
 Worker-thread calls stay one-shot; abort and await active calls before forcibly terminating a worker. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` also retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
 
-The queue retains caller-owned input until staging finishes, with admission limited to 64 MiB and 512 unstaged requests. One oversized input is allowed when it is the only unstaged request. Excess submissions reject with `MacOcrError` code `queue_capacity_exceeded`; await earlier calls before retrying. The queue stages only its active request in a private temporary file, and Node removes the file after each response.
+The queue retains caller-owned input until staging finishes, with admission limited to 64 MiB of retained backing storage and 512 unstaged requests. One oversized input is allowed when it is the only unstaged request. Excess submissions reject with `MacOcrError` code `queue_capacity_exceeded`; await earlier calls before retrying. The queue stages only its active request in a private temporary file, and Node removes the file after each response.
 
 Vision work is serial, so submitting a large `Promise.all()` burst does not improve OCR throughput. Prefer a serial loop or an application-level concurrency limit.
 
