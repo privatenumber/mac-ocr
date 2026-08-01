@@ -42,12 +42,18 @@ const maxUnstagedRequestCount = 512;
 const estimateRetainedMetadataBytes = (arguments_: string[], password?: string): number => {
 	let retainedBytes = arguments_.length * 8;
 	for (const argument of arguments_) {
+		if (typeof argument !== 'string') {
+			throw new TypeError('mac-ocr OCR option values must be strings');
+		}
 		retainedBytes += Math.max(
 			argument.length * 2,
 			Buffer.byteLength(JSON.stringify(argument)),
 		);
 	}
 	if (password !== undefined) {
+		if (typeof password !== 'string') {
+			throw new TypeError('mac-ocr OCR password must be a string');
+		}
 		retainedBytes += Math.max(
 			password.length * 2,
 			Buffer.byteLength(JSON.stringify(password)),

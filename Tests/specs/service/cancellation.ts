@@ -134,6 +134,46 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 		expect(servicePidForTesting()).toBe(pid);
 	});
 
+	await test('preserves caller abort when the service exits during cancellation', async () => {
+		await using wrapper = await importWrapper(`#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const frame = value => {
+  const payload = Buffer.from(JSON.stringify(value))
+  const header = Buffer.alloc(4)
+  header.writeUInt32LE(payload.length)
+  process.stdout.write(Buffer.concat([header, payload]))
+}
+frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
+let buffered = Buffer.alloc(0)
+process.stdin.on('data', chunk => {
+  buffered = Buffer.concat([buffered, chunk])
+  while (buffered.length >= 4) {
+    const length = buffered.readUInt32LE(0)
+    if (buffered.length < length + 4) return
+    const request = JSON.parse(buffered.subarray(4, length + 4))
+    buffered = buffered.subarray(length + 4)
+    if (request.command === 'cancel') process.exit(1)
+  }
+})
+`, { service: true });
+		const controller = new AbortController();
+		const request = wrapper.api.ocr(
+			Buffer.from('input'),
+			{ signal: controller.signal },
+		).catch((error: unknown) => error);
+		await waitFor(
+			() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
+			'Expected the cancellable shim request to start',
+		);
+		controller.abort();
+		expect(await request).toMatchObject({ kind: 'abort' });
+	});
+
 	await test('sends a cancel frame before advancing the queue', async () => {
 		await using wrapper = await importWrapper(`#!/usr/bin/env node
 const crypto = require('node:crypto')

@@ -165,7 +165,7 @@ const startNativeService = (
 		if (rejectQueueOnClose) {
 			rejectQueuedRequests(failure);
 		}
-		rejectPending(failure);
+		rejectPending(pending?.signal?.aborted ? serviceAbortFailure(stderrText()) : failure);
 		if (!ready) {
 			_reject(failure);
 		}

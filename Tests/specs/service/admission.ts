@@ -73,6 +73,38 @@ await describe('admission', async () => {
 		}
 	});
 
+	await test('rejects malformed metadata without poisoning admission state', async () => {
+		await using wrapper = await importWrapper(stalledService, { service: true });
+		const pending: Promise<unknown>[] = [];
+		try {
+			const malformed = wrapper.api.ocr(Buffer.alloc(0), {
+				customWords: [1 as never],
+			}).catch((error: unknown) => error);
+			pending.push(malformed);
+			expect(await Promise.race([
+				malformed,
+				delay(100, 'pending'),
+			])).toBeInstanceOf(TypeError);
+
+			const input = Buffer.alloc(1024 * 1024);
+			const requests = Array.from(
+				{ length: 65 },
+				() => wrapper.api.ocr(input).catch((error: unknown) => error),
+			);
+			pending.push(...requests);
+			expect(await Promise.race([
+				requests.at(-1)!,
+				delay(100, 'pending'),
+			])).toMatchObject({
+				kind: 'runtime',
+				code: 'queue_capacity_exceeded',
+			});
+		} finally {
+			wrapper.serviceApi.stopService();
+			await Promise.all(pending);
+		}
+	});
+
 	await test('rejects queued requests beyond the count budget', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const requests = Array.from(
