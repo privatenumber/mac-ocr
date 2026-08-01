@@ -115,9 +115,7 @@ await describe('ocr', async () => {
 		expect((error as MacOcrError).message).toMatch(/ocr\.pages/);
 	});
 
-	// The main-thread password chain (option → framed request → CLI decrypt) is
-	// pinned per-layer by the service and Swift suites, but only these specs
-	// catch cross-layer contract drift while exercising the real binary.
+	// Covers encrypted-PDF handling through the main-thread API and real binary.
 	await test('password unlocks an encrypted PDF', async () => {
 		const result = await ocr(fixtureData('encrypted.pdf'), { password: 'secret' });
 		expect(result.text).toContain('Hello World');

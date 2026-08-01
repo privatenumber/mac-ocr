@@ -79,8 +79,8 @@ const fastLanguages = await supportedLanguages({ fast: true })
 | `minTextHeight` | `number` | Ignore text shorter than this fraction of image height (`0`–`1`) |
 | `regionOfInterest` | object \| tuple \| string | Restrict recognition to a sub-rectangle (see below) |
 | `pdfDpi` | `number \| 'auto'` | PDF rasterization DPI (`'auto'` default, or `72`–`600`) |
-| `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). Main-thread `ocr()` sends it in the service's framed stdin request; one-shot APIs use the environment. It is never placed in `argv` |
-| `signal` | `AbortSignal` | Abort this call. Main-thread `ocr()` cancels its request in the shared service; one-shot APIs stop their dedicated subprocess |
+| `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). Never included in process arguments (`argv`) |
+| `signal` | `AbortSignal` | Abort this operation |
 
 `ocr` and `ocr.pages` additionally accept:
 
@@ -110,7 +110,7 @@ Normalized, top-left origin. Three accepted forms:
 '0,0,1,0.5'                             // string
 ```
 
-Object/tuple forms are validated before the subprocess spawns (throws `RangeError`/`TypeError` on out-of-range or malformed values).
+Object and tuple forms are validated by Node before OCR begins. Invalid values throw `RangeError` or `TypeError`.
 
 ## Result types
 
@@ -149,7 +149,7 @@ try {
 } catch (error) {
   if (error instanceof MacOcrError) {
     error.kind      // category — see below
-    error.code      // machine-readable code from the CLI, when available
+    error.code      // machine-readable error code, when available
     error.exitCode  // process exit code, or null (signal/never-started)
     error.stderr    // captured CLI stderr
   }
@@ -174,17 +174,21 @@ setTimeout(() => controller.abort(), 5_000)
 await ocr(bytes, { signal: controller.signal })   // rejects with MacOcrError, kind 'abort'
 ```
 
-Queued `ocr()` calls reject immediately when aborted and are removed before their bytes are staged. An active call asks Vision to cancel only that request. If the service does not respond within five seconds, Node kills it and continues queued calls on a lazily started replacement.
+Queued `ocr()` calls stop waiting immediately when aborted. An active call can take up to five seconds to stop. Aborted calls reject with `MacOcrError` kind `abort`.
 
-## Process reuse
+## Concurrency
 
-Ordinary main-thread `ocr()` calls share one lazily started native service within the current Node process, including calls with an `AbortSignal`. Requests retain independent Promises, cancellation, and errors while Swift executes Vision work serially. The service is unreferenced while idle, so it does not keep Node alive; a crashed service rejects pending work and the next call starts a fresh process.
+`ocr()` calls run one at a time. A large `Promise.all()` burst does not improve OCR throughput; prefer a serial loop or an application-level concurrency limit.
 
-Worker-thread calls stay one-shot; abort and await active calls before forcibly terminating a worker. `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` also retain their existing one-shot behavior. Separate Node processes each own a separate service; process reuse is not machine-wide coordination.
+The waiting queue accepts up to 512 calls and a conservative 64 MiB memory budget. Additional calls reject with `MacOcrError` code `queue_capacity_exceeded`. One larger input is accepted when no other call is waiting.
 
-The queue retains caller-owned input until staging finishes and snapshots option strings for each call. Admission is limited to a conservative 64 MiB budget covering input backing storage and serialized options, plus 512 unstaged requests. One oversized input is allowed when it is the only unstaged request. Excess submissions reject with `MacOcrError` code `queue_capacity_exceeded`; await earlier calls before retrying. The queue stages only its active request in a private temporary file, and Node removes the file after each response.
+## Runtime behavior
 
-Vision work is serial, so submitting a large `Promise.all()` burst does not improve OCR throughput. Prefer a serial loop or an application-level concurrency limit.
+Main-thread `ocr()` calls in one Node process share an internal native service. It does not keep Node alive while idle and is replaced after a crash or an unresponsive cancellation. Each Node process has its own service.
+
+Worker-thread calls, `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` run as one-shot processes. Abort and await active worker calls before forcibly terminating a worker, because termination can skip JavaScript cleanup while the one-shot child finishes.
+
+API passwords never enter `argv`: shared `ocr()` calls send them through its internal request stream, while one-shot APIs use `MAC_OCR_PDF_PASSWORD`. Only the active input is written to a private temporary file and it is removed when the operation finishes.
 
 ## Tree-shaking
 

@@ -1,4 +1,4 @@
-/** Category of failure, mirrored from the CLI's machine-error envelope. */
+/** Category of failure from mac-ocr. */
 export type MacOcrErrorKind =
 	| 'usage' // bad arguments / unsupported input (exit 64)
 	| 'unavailable' // a feature isn't available on this macOS version
@@ -8,7 +8,7 @@ export type MacOcrErrorKind =
 	| 'parse' // the binary produced output we couldn't parse
 	| 'abort'; // cancelled via an AbortSignal
 
-/** Structured error envelope emitted by the CLI on file descriptor 3. */
+/** Structured error envelope emitted by one-shot CLI calls on file descriptor 3. */
 export type MacOcrErrorEnvelope = {
 	schema: 'mac-ocr.error';
 	schemaVersion: 1;
@@ -23,13 +23,13 @@ export type MacOcrErrorEnvelope = {
 type MacOcrErrorOptions = {
 	kind: MacOcrErrorKind;
 
-	/** Machine-readable error code from the CLI (e.g. `usage_error`), when available. */
+	/** Machine-readable error code (for example, `usage_error`), when available. */
 	code?: string;
 
 	/** Process exit code, or `null` when killed by a signal / never started. */
 	exitCode?: number | null;
 
-	/** Captured stderr from the CLI. */
+	/** Captured stderr from mac-ocr. */
 	stderr?: string;
 	cause?: unknown;
 };

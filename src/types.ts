@@ -59,7 +59,7 @@ export type OcrResult = {
 /**
  * Region of interest in normalized top-left-origin coordinates. Accepts an
  * object `{ x, y, width, height }`, a tuple `[x, y, width, height]`, or a
- * `"x,y,width,height"` string. Structured forms are validated before spawn.
+ * `"x,y,width,height"` string. Structured forms are validated by Node before OCR begins.
  */
 export type RegionOfInterest =
 	| BoundingBox
