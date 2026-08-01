@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { describe, expect, test } from 'manten';
@@ -10,16 +11,7 @@ import {
 	servicePidForTesting,
 	stopService,
 } from '../../../src/service/index.ts';
-import { serviceDirectories, waitFor } from './utils.ts';
-
-const processExists = (pid: number): boolean => {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-};
+import { processExists, serviceDirectories, waitFor } from './utils.ts';
 
 await describe('ownership', async () => {
 	await test('stops and removes staged inputs when its Node parent exits', async () => {
@@ -93,6 +85,41 @@ process.exit(0)
 		} finally {
 			if (parent.exitCode === null) {
 				parent.kill();
+			}
+		}
+	});
+
+	await test('does not keep Node alive after becoming idle', async () => {
+		const indexUrl = pathToFileURL(new URL('../../../src/index.ts', import.meta.url).pathname).href;
+		const fixtureUrl = pathToFileURL(
+			new URL('../../fixtures/hello.png', import.meta.url).pathname,
+		).href;
+		const source = `
+import fs from 'node:fs/promises'
+import { ocr } from ${JSON.stringify(indexUrl)}
+await ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
+`;
+		const child = spawn(process.execPath, [
+			'--input-type=module',
+			'--eval',
+			source,
+		], { stdio: ['ignore', 'ignore', 'pipe'] });
+		let stderr = '';
+		child.stderr.on('data', (chunk) => {
+			stderr += chunk;
+		});
+		try {
+			const outcome = await Promise.race([
+				once(child, 'close'),
+				delay(2000, 'timeout'),
+			]);
+			if (outcome === 'timeout') {
+				throw new Error(`Idle service kept Node alive: ${stderr}`);
+			}
+			expect(outcome).toStrictEqual([0, null]);
+		} finally {
+			if (child.exitCode === null) {
+				child.kill();
 			}
 		}
 	});

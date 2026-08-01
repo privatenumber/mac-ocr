@@ -43,7 +43,7 @@ export type NativeService = {
 type ServiceState = {
 	promise?: Promise<NativeService>;
 	active?: NativeService;
-	stopStarting?: () => void;
+	stop?: () => void;
 	startingPid?: number;
 };
 
@@ -197,7 +197,7 @@ const startNativeService = (
 		detachStartupAbortListener();
 		service.inputDirectory = hello.inputDirectory;
 		if (serviceState === state) {
-			state.stopStarting = undefined;
+			state.active = service;
 			state.startingPid = undefined;
 		}
 		_resolve(service);
@@ -351,7 +351,7 @@ const startNativeService = (
 		},
 	};
 	if (serviceState === state) {
-		state.stopStarting = service.stop;
+		state.stop = service.stop;
 	}
 	if (startupSignal) {
 		startupAbortListener = () => {
@@ -390,12 +390,7 @@ export const getNativeService = (
 	if (!serviceState) {
 		const state: ServiceState = {};
 		serviceState = state;
-		state.promise = startNativeService(state, rejectQueuedRequests, signal).then((service) => {
-			if (serviceState === state) {
-				state.active = service;
-			}
-			return service;
-		}).catch((error) => {
+		state.promise = startNativeService(state, rejectQueuedRequests, signal).catch((error) => {
 			if (serviceState === state) {
 				serviceState = undefined;
 			}
@@ -408,8 +403,7 @@ export const getNativeService = (
 export const stopNativeService = (): void => {
 	const state = serviceState;
 	serviceState = undefined;
-	state?.stopStarting?.();
-	state?.active?.stop();
+	state?.stop?.();
 };
 
 export const servicePidForTesting = (): number | undefined => serviceState?.active?.pid;

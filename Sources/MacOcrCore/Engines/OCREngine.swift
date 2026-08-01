@@ -93,11 +93,9 @@ final class OCRCancellation: @unchecked Sendable {
 		}
 	}
 
-	func unregister(_ request: VNRequest) {
+	func unregister() {
 		lock.withLock {
-			if self.request === request {
-				self.request = nil
-			}
+			request = nil
 		}
 	}
 }
@@ -322,7 +320,7 @@ func recognizeText(
 	}
 
 	try cancellation?.register(request)
-	defer { cancellation?.unregister(request) }
+	defer { cancellation?.unregister() }
 	do {
 		try session.handler.perform([request])
 	} catch {

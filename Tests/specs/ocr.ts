@@ -143,20 +143,4 @@ await describe('ocr', async () => {
 		expect(macOcrError.exitCode).toBe(1);
 		expect(macOcrError.stderr).toContain('Incorrect password');
 	});
-
-	await test('aborts when the signal fires', async () => {
-		const controller = new AbortController();
-		queueMicrotask(() => controller.abort());
-		await expect(
-			ocr(fixtureData('multipage.pdf'), { signal: controller.signal }),
-		).rejects.toThrow(/abort/i);
-	});
-
-	await test('rejects when the signal is already aborted', async () => {
-		const controller = new AbortController();
-		controller.abort();
-		await expect(
-			ocr(fixtureData('hello.png'), { signal: controller.signal }),
-		).rejects.toThrow(/abort/i);
-	});
 });

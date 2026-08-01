@@ -7,16 +7,7 @@ import {
 	servicePidForTesting,
 } from '../../../src/service/index.ts';
 import { fixtureData, importWrapper } from '../../utils.ts';
-import { ensureServiceForTesting, waitFor } from './utils.ts';
-
-const processExists = (pid: number): boolean => {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-};
+import { ensureServiceForTesting, processExists, waitFor } from './utils.ts';
 
 await describe('cancellation', async () => {
 	await test('rejects a pre-aborted service request', async () => {
@@ -28,6 +19,7 @@ await describe('cancellation', async () => {
 			{ signal: controller.signal },
 		).catch((error_: unknown) => error_);
 		expect(error).toMatchObject({ kind: 'abort' });
+		expect((error as Error).message).toMatch(/abort/i);
 		expect(servicePidForTesting()).toBe(pid);
 	});
 

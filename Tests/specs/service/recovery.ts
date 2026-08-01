@@ -1,5 +1,3 @@
-import { spawn } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, test } from 'manten';
 import { ocr, type MacOcrError } from '../../../src/index.ts';
 import {
@@ -10,18 +8,10 @@ import {
 import { fixtureData, importWrapper } from '../../utils.ts';
 import {
 	ensureServiceForTesting,
+	processExists,
 	serviceDirectories,
 	waitFor,
 } from './utils.ts';
-
-const pgrep = (pattern: string): Promise<string> => new Promise((resolve) => {
-	const check = spawn('pgrep', ['-f', pattern]);
-	let found = '';
-	check.stdout.on('data', (chunk) => {
-		found += chunk;
-	});
-	check.on('close', () => resolve(found.trim()));
-});
 
 const waitForServiceStop = async (): Promise<void> => waitFor(
 	() => servicePidForTesting() === undefined,
@@ -166,14 +156,12 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 			() => wrapper.serviceApi.startingServicePidForTesting() !== undefined,
 			'Expected the service process to start before stopService()',
 		);
+		const startingPid = wrapper.serviceApi.startingServicePidForTesting()!;
 		wrapper.serviceApi.stopService();
 		expect(await pending).toBeInstanceOf(wrapper.api.MacOcrError);
-		const deadline = Date.now() + 2000;
-		let leftover = await pgrep(wrapper.binaryPath);
-		while (leftover && Date.now() < deadline) {
-			await delay(20);
-			leftover = await pgrep(wrapper.binaryPath);
-		}
-		expect(leftover).toBe('');
+		await waitFor(
+			() => !processExists(startingPid),
+			'Expected the starting service process to stop',
+		);
 	});
 });

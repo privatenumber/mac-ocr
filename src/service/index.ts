@@ -74,17 +74,22 @@ const removeStagedInput = async (inputPath: string, suppressFailure: boolean): P
 
 const releaseRequestInput = (request: QueuedOcrRequest): void => {
 	if (request.buffer) {
+		// Clearing the buffer makes admission release idempotent across nested cleanup paths.
 		request.buffer = undefined;
 		unstagedRequestBytes -= request.retainedBytes;
 		unstagedRequestCount -= 1;
 	}
 };
 
+const removeQueuedAbortListener = (request: QueuedOcrRequest): void => {
+	if (request.signal && request.settleAbortListener) {
+		request.signal.removeEventListener('abort', request.settleAbortListener);
+	}
+};
+
 const rejectQueuedOcrRequests = (error: unknown): void => {
 	for (const request of queuedOcrRequests.splice(0)) {
-		if (request.signal && request.settleAbortListener) {
-			request.signal.removeEventListener('abort', request.settleAbortListener);
-		}
+		removeQueuedAbortListener(request);
 		releaseRequestInput(request);
 		request.reject(error);
 	}
@@ -135,13 +140,6 @@ const runQueuedOcr = async (request: QueuedOcrRequest): Promise<OcrResult> => {
 		}
 	}
 };
-
-const removeQueuedAbortListener = (request: QueuedOcrRequest): void => {
-	if (request.signal && request.settleAbortListener) {
-		request.signal.removeEventListener('abort', request.settleAbortListener);
-	}
-};
-
 const drainServiceQueue = async (): Promise<void> => {
 	serviceQueueRunning = true;
 	try {

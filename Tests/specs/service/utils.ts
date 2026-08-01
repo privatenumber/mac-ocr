@@ -5,6 +5,15 @@ import { ocr } from '../../../src/index.ts';
 import { servicePidForTesting } from '../../../src/service/index.ts';
 import { fixtureData } from '../../utils.ts';
 
+export const processExists = (pid: number): boolean => {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
 export const waitFor = async (
 	condition: () => boolean | Promise<boolean>,
 	message: string,
