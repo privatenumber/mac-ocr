@@ -24,6 +24,7 @@ type PendingRequest = {
 	reject: (error: unknown) => void;
 	signal?: AbortSignal;
 	cancelAbortListener?: () => void;
+	cancelGraceTimer?: NodeJS.Timeout;
 };
 
 export type NativeService = {
@@ -54,6 +55,7 @@ type ExitStatus = {
 };
 
 const transportCloseGraceMilliseconds = 5000;
+const cancellationGraceMilliseconds = 5000;
 const maxRetainedStderrBytes = 64 * 1024;
 
 // Callback identity prevents a stopped service from clearing its replacement.
@@ -118,15 +120,23 @@ const startNativeService = (
 			forceExitTimer.unref();
 		}
 	};
+	const detachPendingCancellation = (request: PendingRequest): void => {
+		if (request.signal && request.cancelAbortListener) {
+			request.signal.removeEventListener('abort', request.cancelAbortListener);
+		}
+		if (request.cancelGraceTimer) {
+			clearTimeout(request.cancelGraceTimer);
+			request.cancelGraceTimer = undefined;
+		}
+	};
 	const rejectPending = (error: unknown): void => {
 		if (!pending) {
 			return;
 		}
-		if (pending.signal && pending.cancelAbortListener) {
-			pending.signal.removeEventListener('abort', pending.cancelAbortListener);
-		}
-		pending.reject(error);
+		const request = pending;
 		pending = undefined;
+		detachPendingCancellation(request);
+		request.reject(error);
 		subprocess.unref();
 	};
 	const close = (
@@ -162,7 +172,7 @@ const startNativeService = (
 		const failure = failureOverride ?? (didFailToSpawn
 			? serviceSpawnFailure(error, stderrText())
 			: serviceFailure(message, stderrText(), error ?? transportError, exitCode));
-		if (rejectQueueOnClose) {
+		if (rejectQueueOnClose && !pending?.signal?.aborted) {
 			rejectQueuedRequests(failure);
 		}
 		rejectPending(pending?.signal?.aborted ? serviceAbortFailure(stderrText()) : failure);
@@ -205,9 +215,7 @@ const startNativeService = (
 			return false;
 		}
 		pending = undefined;
-		if (request.signal && request.cancelAbortListener) {
-			request.signal.removeEventListener('abort', request.cancelAbortListener);
-		}
+		detachPendingCancellation(request);
 		subprocess.unref();
 		if (request.signal?.aborted) {
 			request.reject(serviceAbortFailure(response.type === 'error' ? response.error.stderr : ''));
@@ -291,9 +299,21 @@ const startNativeService = (
 			let cancelAbortListener: (() => void) | undefined;
 			if (signal) {
 				cancelAbortListener = () => {
-					if (pending?.id !== id) {
+					const request = pending;
+					if (request?.id !== id) {
 						return;
 					}
+					request.cancelGraceTimer = setTimeout(() => {
+						if (pending !== request) {
+							return;
+						}
+						subprocess.stdin.destroy();
+						subprocess.stdout.destroy();
+						subprocess.stderr.destroy();
+						subprocess.kill('SIGKILL');
+						close();
+					}, cancellationGraceMilliseconds);
+					request.cancelGraceTimer.unref();
 					const cancelFrame = encodeFrame({
 						id,
 						command: 'cancel',

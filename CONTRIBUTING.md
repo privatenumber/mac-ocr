@@ -100,7 +100,7 @@ skills/                    # agent skill (shipped to npm via skills-npm)
 - **Serialized Vision.** All recognition routes through the `VisionRuntime` actor (`OCREngine.run`). Its closure is deliberately synchronous — see the warning on `VisionRuntime` before changing this.
 - **One runner.** `BatchRunner` owns source opening, PDF page iteration, serial execution, and fail-soft error aggregation (`ErrorSink`); the per-page operation and the output shape (`OutputStrategy`) are injected. `searchable-pdf` drives `SearchablePDF.render(...)` directly because its output is one binary PDF per input rather than per-page analysis.
 - **Three commands.** `RootCommand` registers `OCRCommand` (default — `mac-ocr photo.png` just works), `SearchablePDFCommand`, and `LanguagesCommand`. Shared recognition flags live in the `RecognitionOptions` option group so the commands cannot drift.
-- **Node wrapper.** `src/` spawns the binary with `MAC_OCR_ERROR_FORMAT=json` + an fd-3 pipe, parses JSONL, and classifies failures into typed `MacOcrError` kinds. The PDF password travels via env (`MAC_OCR_PDF_PASSWORD`), never argv.
+- **Node wrapper.** `src/` spawns the binary with `MAC_OCR_ERROR_FORMAT=json` + an fd-3 pipe, parses JSONL, and classifies failures into typed `MacOcrError` kinds. Main-thread `ocr()` sends PDF passwords in framed service requests; one-shot APIs use `MAC_OCR_PDF_PASSWORD`. Passwords never enter argv.
 
 ## CI/CD
 

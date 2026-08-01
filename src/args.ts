@@ -49,9 +49,9 @@ export const serializeRegionOfInterest = (roi: RegionOfInterest): string => {
 /**
  * Map the shared + OCR options to CLI flags. `createSearchablePdf` simply
  * never sets `maxCandidates`. `password` is deliberately NOT mapped to
- * `--password` — argv is visible to every user on the machine via `ps`, so
- * `spawnBinary` forwards it through the `MAC_OCR_PDF_PASSWORD` env var the
- * CLI already supports.
+ * `--password` — argv is visible to every user on the machine via `ps`.
+ * One-shot calls use `MAC_OCR_PDF_PASSWORD`; shared-service calls send the
+ * password inside their framed stdin request.
  */
 export const buildArgs = (options?: OcrOptions): string[] => {
 	const args: string[] = [];

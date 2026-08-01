@@ -115,10 +115,9 @@ await describe('ocr', async () => {
 		expect((error as MacOcrError).message).toMatch(/ocr\.pages/);
 	});
 
-	// The password chain (option → env var → CLI decrypt) is pinned per-layer
-	// by the shim specs and the Swift suite, but only these specs catch
-	// cross-layer contract drift (each layer renaming the env var while its
-	// own tests stay self-consistently green).
+	// The main-thread password chain (option → framed request → CLI decrypt) is
+	// pinned per-layer by the service and Swift suites, but only these specs
+	// catch cross-layer contract drift while exercising the real binary.
 	await test('password unlocks an encrypted PDF', async () => {
 		const result = await ocr(fixtureData('encrypted.pdf'), { password: 'secret' });
 		expect(result.text).toContain('Hello World');

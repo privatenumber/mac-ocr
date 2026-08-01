@@ -174,6 +174,72 @@ process.stdin.on('data', chunk => {
 		expect(await request).toMatchObject({ kind: 'abort' });
 	});
 
+	await test('replaces a service that does not acknowledge cancellation', async () => {
+		await using wrapper = await importWrapper(`#!/usr/bin/env node
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const marker = path.join(__dirname, '.started')
+const replacement = fs.existsSync(marker)
+fs.writeFileSync(marker, '')
+const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
+fs.mkdirSync(directory, { mode: 0o700 })
+const frame = value => {
+  const payload = Buffer.from(JSON.stringify(value))
+  const header = Buffer.alloc(4)
+  header.writeUInt32LE(payload.length)
+  process.stdout.write(Buffer.concat([header, payload]))
+}
+frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
+let buffered = Buffer.alloc(0)
+process.stdin.on('data', chunk => {
+  buffered = Buffer.concat([buffered, chunk])
+  while (buffered.length >= 4) {
+    const length = buffered.readUInt32LE(0)
+    if (buffered.length < length + 4) return
+    const request = JSON.parse(buffered.subarray(4, length + 4))
+    buffered = buffered.subarray(length + 4)
+    if (replacement && request.command === 'ocr') {
+      frame({
+        id: request.id,
+        type: 'result',
+        result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'replacement', observations: [] },
+      })
+    }
+  }
+})
+process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
+`, { service: true });
+		try {
+			const controller = new AbortController();
+			const first = wrapper.api.ocr(
+				Buffer.from('first'),
+				{ signal: controller.signal },
+			).catch((error: unknown) => error);
+			await waitFor(
+				() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
+				'Expected the cancellable shim request to start',
+			);
+			const firstPid = wrapper.serviceApi.servicePidForTesting()!;
+			const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
+			controller.abort();
+			const [firstOutcome, secondOutcome] = await Promise.all([
+				Promise.race([first, delay(8000, 'timeout')]),
+				Promise.race([second, delay(8000, 'timeout')]),
+			]);
+			expect(firstOutcome).toMatchObject({ kind: 'abort' });
+			expect(secondOutcome).toMatchObject({ text: 'replacement' });
+			expect(wrapper.serviceApi.servicePidForTesting()).not.toBe(firstPid);
+			await waitFor(
+				() => !processExists(firstPid),
+				'Expected the unresponsive service process to stop',
+			);
+		} finally {
+			wrapper.serviceApi.stopService();
+		}
+	});
+
 	await test('sends a cancel frame before advancing the queue', async () => {
 		await using wrapper = await importWrapper(`#!/usr/bin/env node
 const crypto = require('node:crypto')

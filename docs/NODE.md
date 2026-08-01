@@ -79,7 +79,7 @@ const fastLanguages = await supportedLanguages({ fast: true })
 | `minTextHeight` | `number` | Ignore text shorter than this fraction of image height (`0`–`1`) |
 | `regionOfInterest` | object \| tuple \| string | Restrict recognition to a sub-rectangle (see below) |
 | `pdfDpi` | `number \| 'auto'` | PDF rasterization DPI (`'auto'` default, or `72`–`600`) |
-| `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). Forwarded to the CLI via the env var, never `argv`, so it stays out of the process list |
+| `password` | `string` | Password for an encrypted PDF (falls back to `MAC_OCR_PDF_PASSWORD`). Main-thread `ocr()` sends it in the service's framed stdin request; one-shot APIs use the environment. It is never placed in `argv` |
 | `signal` | `AbortSignal` | Abort this call. Main-thread `ocr()` cancels its request in the shared service; one-shot APIs stop their dedicated subprocess |
 
 `ocr` and `ocr.pages` additionally accept:
@@ -174,7 +174,7 @@ setTimeout(() => controller.abort(), 5_000)
 await ocr(bytes, { signal: controller.signal })   // rejects with MacOcrError, kind 'abort'
 ```
 
-Queued `ocr()` calls reject immediately when aborted and are removed before their bytes are staged. An active call asks Vision to cancel only that request; the shared service remains available for subsequent OCR calls.
+Queued `ocr()` calls reject immediately when aborted and are removed before their bytes are staged. An active call asks Vision to cancel only that request. If the service does not respond within five seconds, Node kills it and continues queued calls on a lazily started replacement.
 
 ## Process reuse
 
