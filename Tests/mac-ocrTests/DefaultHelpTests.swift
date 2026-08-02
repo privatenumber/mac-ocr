@@ -14,6 +14,7 @@ import Testing
 		#expect(result.exitCode == 0)
 		#expect(result.stdout.contains("searchable-pdf"), "root help must list subcommands; got: \(result.stdout)")
 		#expect(result.stdout.contains("languages"))
+		#expect(!result.stdout.contains("--service"), "internal service switch leaked into help: \(result.stdout)")
 		#expect(
 			!result.stdout.contains("USAGE: mac-ocr ocr"),
 			"bare invocation must not show the ocr subcommand usage; got: \(result.stdout)"
@@ -24,6 +25,7 @@ import Testing
 		let result = try runWithTerminalStdin(["ocr"])
 		#expect(result.exitCode == 0)
 		#expect(result.stdout.contains("USAGE: mac-ocr ocr"), "got: \(result.stdout)")
+		#expect(!result.stdout.contains("--service"), "internal service switch leaked into help: \(result.stdout)")
 	}
 
 	// MARK: - Helper

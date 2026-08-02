@@ -44,6 +44,18 @@ import Testing
 		)
 	}
 
+	@Test func invalidServiceVersionUsesNormalUsageError() throws {
+		let run = try TestSupport.runCapturingFd3(["--service=2"])
+		#expect(run.exitCode == 64)
+
+		let envelope = try #require(
+			JSONSerialization.jsonObject(with: Data(run.fd3.utf8)) as? [String: Any],
+			"Expected a JSON error envelope on fd 3; got: \(run.fd3)"
+		)
+		#expect(envelope["kind"] as? String == "usage")
+		#expect(envelope["code"] as? String == "usage_error")
+	}
+
 	@Test func batchFailureEmitsRuntimeEnvelope() throws {
 		// A non-image input fails at decode time; the batch reports it and
 		// exits 1 via BatchRunFailure, which must surface as a runtime-kind
