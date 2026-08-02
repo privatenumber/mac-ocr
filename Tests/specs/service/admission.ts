@@ -73,16 +73,23 @@ await describe('admission', () => {
 		}
 	});
 
-	test('rejects malformed metadata without poisoning admission state', async () => {
+	test('rejects malformed options without poisoning admission state', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const pending: Promise<unknown>[] = [];
 		try {
-			const malformed = wrapper.api.ocr(Buffer.alloc(0), {
+			const malformedMetadata = wrapper.api.ocr(Buffer.alloc(0), {
 				customWords: [1 as never],
 			}).catch((error: unknown) => error);
-			pending.push(malformed);
+			const malformedSignal = wrapper.api.ocr(Buffer.alloc(0), {
+				signal: {} as AbortSignal,
+			}).catch((error: unknown) => error);
+			pending.push(malformedMetadata, malformedSignal);
 			expect(await Promise.race([
-				malformed,
+				malformedMetadata,
+				setTimeout(100, 'pending'),
+			])).toBeInstanceOf(TypeError);
+			expect(await Promise.race([
+				malformedSignal,
 				setTimeout(100, 'pending'),
 			])).toBeInstanceOf(TypeError);
 

@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import { addAbortListener } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { isMainThread } from 'node:worker_threads';
 import { buildArgs } from '../args.ts';
 import { MacOcrError } from '../errors.ts';
 import { toBuffer } from '../process.ts';
@@ -31,7 +30,6 @@ type QueuedOcrRequest = {
 	abortSubscription?: ReturnType<typeof addAbortListener>;
 };
 
-let serviceEnabled = true;
 const queuedOcrRequests: QueuedOcrRequest[] = [];
 let serviceQueueRunning = false;
 let unstagedRequestBytes = 0;
@@ -69,6 +67,16 @@ const removeStagedInput = async (inputPath: string, suppressFailure: boolean): P
 	} catch (error) {
 		if (!suppressFailure) {
 			throw serviceInputFailure(error);
+		}
+	}
+};
+
+const retireMissingServiceDirectory = async (inputDirectory: string): Promise<void> => {
+	try {
+		await fs.access(inputDirectory);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			stopNativeService();
 		}
 	}
 };
@@ -129,7 +137,12 @@ const runQueuedOcr = async (request: QueuedOcrRequest): Promise<OcrResult> => {
 		} finally {
 			releaseRequestInput(request);
 		}
-		return await service.request(inputName, request.arguments, request.password, signal);
+		try {
+			return await service.request(inputName, request.arguments, request.password, signal);
+		} catch (error) {
+			await retireMissingServiceDirectory(service.inputDirectory);
+			throw error;
+		}
 	} catch (error) {
 		primaryError = error;
 		throw error;
@@ -145,6 +158,7 @@ const drainServiceQueue = async (): Promise<void> => {
 	try {
 		while (queuedOcrRequests.length > 0) {
 			const request = queuedOcrRequests.shift()!;
+			removeQueuedAbortListener(request);
 			try {
 				const result = await runQueuedOcr(request);
 				request.resolve(result);
@@ -190,8 +204,6 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 			},
 		);
 	}
-	unstagedRequestBytes += retainedBytes;
-	unstagedRequestCount += 1;
 	const { promise, resolve, reject } = Promise.withResolvers<OcrResult>();
 	const request: QueuedOcrRequest = {
 		buffer: inputBuffer,
@@ -214,6 +226,8 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 			request.reject(serviceAbortFailure());
 		});
 	}
+	unstagedRequestBytes += retainedBytes;
+	unstagedRequestCount += 1;
 	queuedOcrRequests.push(request);
 	if (!serviceQueueRunning) {
 		drainServiceQueue().catch(rejectQueuedOcrRequests);
@@ -221,14 +235,7 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 	return promise;
 };
 
-export const shouldUseService = (): boolean => serviceEnabled && isMainThread;
-
 export const stopService = (): void => {
 	rejectQueuedOcrRequests(serviceFailure('mac-ocr service stopped', ''));
 	stopNativeService();
-};
-
-export const disableServiceForTesting = (): void => {
-	stopService();
-	serviceEnabled = false;
 };

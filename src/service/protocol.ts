@@ -3,14 +3,12 @@ import path from 'node:path';
 import { MacOcrError, type MacOcrErrorKind } from '../errors.ts';
 import type { OcrResult } from '../types.ts';
 
-export const protocolVersion = 1;
 const maxFrameBytes = 64 * 1024 * 1024;
 const initialFrameBufferBytes = 16 * 1024;
 const serviceDirectoryPattern = /^mac-ocr-service-\d+-[0-9A-Fa-f-]{36}$/;
 
 export type NativeHello = {
 	type: 'hello';
-	protocolVersion: number;
 	inputDirectory: string;
 };
 
@@ -63,7 +61,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
 export const isNativeHello = (value: unknown): value is NativeHello => (
 	isRecord(value)
 	&& value.type === 'hello'
-	&& value.protocolVersion === protocolVersion
 	&& typeof value.inputDirectory === 'string'
 	&& isServiceInputDirectory(value.inputDirectory)
 );

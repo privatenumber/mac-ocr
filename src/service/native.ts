@@ -14,7 +14,6 @@ import {
 	encodeFrame,
 	isNativeHello,
 	isNativeResponse,
-	protocolVersion,
 	type NativeHello,
 	type NativeResponse,
 } from './protocol.ts';
@@ -67,12 +66,14 @@ const startNativeService = (
 	rejectQueuedRequests: RejectQueuedRequests,
 	startupSignal?: AbortSignal,
 ): Promise<NativeService> => new Promise((_resolve, _reject) => {
-	const subprocess = childProcess.spawn(binaryPath, [`--service=${protocolVersion}`], {
+	const subprocess = childProcess.spawn(binaryPath, ['--service'], {
 		stdio: ['pipe', 'pipe', 'pipe'],
 	});
 	if (serviceState === state) {
 		state.startingPid = subprocess.pid;
 	}
+	// `close()` is the terminal transition: it settles active work and either
+	// rejects or preserves queued work based on the active request's abort state.
 	let pending: PendingRequest | undefined;
 	let retainedStderr = Buffer.alloc(0);
 	let nextRequestId = 0;
@@ -83,7 +84,7 @@ const startNativeService = (
 	let failureOverride: MacOcrError | undefined;
 	let transportError: unknown;
 	let forceExitTimer: NodeJS.Timeout | undefined;
-	let startupAbortListener: (() => void) | undefined;
+	let startupAbortSubscription: ReturnType<typeof addAbortListener> | undefined;
 	let service: NativeService;
 	const unrefIdleHandles = (): void => {
 		subprocess.unref();
@@ -106,10 +107,8 @@ const startNativeService = (
 		retainedStderr = nextStderr;
 	};
 	const detachStartupAbortListener = (): void => {
-		if (startupSignal && startupAbortListener) {
-			startupSignal.removeEventListener('abort', startupAbortListener);
-			startupAbortListener = undefined;
-		}
+		startupAbortSubscription?.[Symbol.dispose]();
+		startupAbortSubscription = undefined;
 	};
 	const recordTransportError = (error: unknown): void => {
 		if (closed) {
@@ -349,7 +348,7 @@ const startNativeService = (
 		state.stop = service.stop;
 	}
 	if (startupSignal) {
-		startupAbortListener = () => {
+		startupAbortSubscription = addAbortListener(startupSignal, () => {
 			if (ready || closed) {
 				return;
 			}
@@ -361,11 +360,7 @@ const startNativeService = (
 			subprocess.kill('SIGKILL');
 			subprocess.unref();
 			close();
-		};
-		startupSignal.addEventListener('abort', startupAbortListener, { once: true });
-		if (startupSignal.aborted) {
-			startupAbortListener();
-		}
+		});
 	}
 
 	subprocess.stderr.on('data', retainStderr);

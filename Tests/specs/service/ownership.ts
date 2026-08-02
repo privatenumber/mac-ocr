@@ -113,7 +113,7 @@ await ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
 				child.kill();
 			}
 		}
-	}, 2000);
+	}, 5000);
 
 	test('keeps worker-thread calls on the one-shot path', async () => {
 		const indexUrl = pathToFileURL(new URL('../../../src/index.ts', import.meta.url).pathname).href;

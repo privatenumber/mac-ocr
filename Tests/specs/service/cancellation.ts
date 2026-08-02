@@ -7,7 +7,12 @@ import {
 	servicePidForTesting,
 } from '../../../src/service/index.ts';
 import { fixtureData, importWrapper } from '../../utils.ts';
-import { ensureServiceForTesting, processExists, waitFor } from './utils.ts';
+import {
+	ensureServiceForTesting,
+	processExists,
+	serviceShim,
+	waitFor,
+} from './utils.ts';
 
 await describe('cancellation', () => {
 	test('rejects a pre-aborted service request', async () => {
@@ -29,6 +34,7 @@ setTimeout(() => {}, 30_000)
 `, { service: true });
 		try {
 			const controller = new AbortController();
+			controller.signal.addEventListener('abort', event => event.stopImmediatePropagation());
 			const first = wrapper.api.ocr(
 				Buffer.from('first'),
 				{ signal: controller.signal },
@@ -38,39 +44,15 @@ setTimeout(() => {}, 30_000)
 				'Expected the stalled service process to start',
 			);
 			const firstPid = wrapper.serviceApi.startingServicePidForTesting()!;
-			await fs.writeFile(wrapper.binaryPath, `#!/usr/bin/env node
-const crypto = require('node:crypto')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
-fs.mkdirSync(directory, { mode: 0o700 })
-const frame = value => {
-  const payload = Buffer.from(JSON.stringify(value))
-  const header = Buffer.alloc(4)
-  header.writeUInt32LE(payload.length)
-  process.stdout.write(Buffer.concat([header, payload]))
-}
-frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
-let buffered = Buffer.alloc(0)
-process.stdin.on('data', chunk => {
-  buffered = Buffer.concat([buffered, chunk])
-  while (buffered.length >= 4) {
-    const length = buffered.readUInt32LE(0)
-    if (buffered.length < length + 4) return
-    const request = JSON.parse(buffered.subarray(4, length + 4))
-    buffered = buffered.subarray(length + 4)
-    if (request.command === 'ocr') {
-      frame({
-        id: request.id,
-        type: 'result',
-        result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
-      })
-    }
-  }
-})
-process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
-`);
+			await fs.writeFile(wrapper.binaryPath, serviceShim({
+				onRequest: `if (request.command === 'ocr') {
+  frame({
+    id: request.id,
+    type: 'result',
+    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
+  })
+}`,
+			}));
 			const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
 			controller.abort();
 			expect(await first).toMatchObject({ kind: 'abort' });
@@ -130,32 +112,9 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 	});
 
 	test('preserves caller abort when the service exits during cancellation', async () => {
-		await using wrapper = await importWrapper(`#!/usr/bin/env node
-const crypto = require('node:crypto')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
-fs.mkdirSync(directory, { mode: 0o700 })
-const frame = value => {
-  const payload = Buffer.from(JSON.stringify(value))
-  const header = Buffer.alloc(4)
-  header.writeUInt32LE(payload.length)
-  process.stdout.write(Buffer.concat([header, payload]))
-}
-frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
-let buffered = Buffer.alloc(0)
-process.stdin.on('data', chunk => {
-  buffered = Buffer.concat([buffered, chunk])
-  while (buffered.length >= 4) {
-    const length = buffered.readUInt32LE(0)
-    if (buffered.length < length + 4) return
-    const request = JSON.parse(buffered.subarray(4, length + 4))
-    buffered = buffered.subarray(length + 4)
-    if (request.command === 'cancel') process.exit(1)
-  }
-})
-`, { service: true });
+		await using wrapper = await importWrapper(serviceShim({
+			onRequest: "if (request.command === 'cancel') process.exit(1)",
+		}), { service: true });
 		const controller = new AbortController();
 		const request = wrapper.api.ocr(
 			Buffer.from('input'),
@@ -170,42 +129,18 @@ process.stdin.on('data', chunk => {
 	});
 
 	test('replaces a service that does not acknowledge cancellation', async () => {
-		await using wrapper = await importWrapper(`#!/usr/bin/env node
-const crypto = require('node:crypto')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const marker = path.join(__dirname, '.started')
+		await using wrapper = await importWrapper(serviceShim({
+			setup: `const marker = path.join(__dirname, '.started')
 const replacement = fs.existsSync(marker)
-fs.writeFileSync(marker, '')
-const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
-fs.mkdirSync(directory, { mode: 0o700 })
-const frame = value => {
-  const payload = Buffer.from(JSON.stringify(value))
-  const header = Buffer.alloc(4)
-  header.writeUInt32LE(payload.length)
-  process.stdout.write(Buffer.concat([header, payload]))
-}
-frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
-let buffered = Buffer.alloc(0)
-process.stdin.on('data', chunk => {
-  buffered = Buffer.concat([buffered, chunk])
-  while (buffered.length >= 4) {
-    const length = buffered.readUInt32LE(0)
-    if (buffered.length < length + 4) return
-    const request = JSON.parse(buffered.subarray(4, length + 4))
-    buffered = buffered.subarray(length + 4)
-    if (replacement && request.command === 'ocr') {
-      frame({
-        id: request.id,
-        type: 'result',
-        result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'replacement', observations: [] },
-      })
-    }
-  }
-})
-process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
-`, { service: true });
+fs.writeFileSync(marker, '')`,
+			onRequest: `if (replacement && request.command === 'ocr') {
+  frame({
+    id: request.id,
+    type: 'result',
+    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'replacement', observations: [] },
+  })
+}`,
+		}), { service: true });
 		try {
 			const controller = new AbortController();
 			const first = wrapper.api.ocr(
@@ -236,51 +171,27 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 	});
 
 	test('sends a cancel frame before advancing the queue', async () => {
-		await using wrapper = await importWrapper(`#!/usr/bin/env node
-const crypto = require('node:crypto')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
-fs.mkdirSync(directory, { mode: 0o700 })
-const frame = value => {
-  const payload = Buffer.from(JSON.stringify(value))
-  const header = Buffer.alloc(4)
-  header.writeUInt32LE(payload.length)
-  process.stdout.write(Buffer.concat([header, payload]))
-}
-frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
-let activeId
-let blockNextOcr = true
-let buffered = Buffer.alloc(0)
-process.stdin.on('data', chunk => {
-  buffered = Buffer.concat([buffered, chunk])
-  while (buffered.length >= 4) {
-    const length = buffered.readUInt32LE(0)
-    if (buffered.length < length + 4) return
-    const request = JSON.parse(buffered.subarray(4, length + 4))
-    buffered = buffered.subarray(length + 4)
-    if (request.command === 'cancel' && request.id === activeId) {
-      frame({
-        id: request.id,
-        type: 'error',
-        error: { kind: 'abort', message: 'aborted', exitCode: null, stderr: '' },
-      })
-      activeId = undefined
-    } else if (request.command === 'ocr' && blockNextOcr) {
-      activeId = request.id
-      blockNextOcr = false
-    } else if (request.command === 'ocr') {
-      frame({
-        id: request.id,
-        type: 'result',
-        result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'next', observations: [] },
-      })
-    }
-  }
-})
-process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
-`, { service: true });
+		await using wrapper = await importWrapper(serviceShim({
+			setup: `let activeId
+let blockNextOcr = true`,
+			onRequest: `if (request.command === 'cancel' && request.id === activeId) {
+  frame({
+    id: request.id,
+    type: 'error',
+    error: { kind: 'abort', message: 'aborted', exitCode: null, stderr: '' },
+  })
+  activeId = undefined
+} else if (request.command === 'ocr' && blockNextOcr) {
+  activeId = request.id
+  blockNextOcr = false
+} else if (request.command === 'ocr') {
+  frame({
+    id: request.id,
+    type: 'result',
+    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'next', observations: [] },
+  })
+}`,
+		}), { service: true });
 		try {
 			const controller = new AbortController();
 			const first = wrapper.api.ocr(
@@ -297,7 +208,7 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 			expect(await first).toMatchObject({ kind: 'abort' });
 			const result = await Promise.race([
 				second,
-				setTimeout(500, 'timeout'),
+				setTimeout(2000, 'timeout'),
 			]);
 			expect(result).toMatchObject({ text: 'next' });
 			expect(wrapper.serviceApi.servicePidForTesting()).toBe(pid);

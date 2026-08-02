@@ -44,8 +44,8 @@ import Testing
 		)
 	}
 
-	@Test func invalidServiceVersionUsesNormalUsageError() throws {
-		let run = try TestSupport.runCapturingFd3(["--service=2"])
+	@Test func invalidServiceArgumentUsesNormalUsageError() throws {
+		let run = try TestSupport.runCapturingFd3(["--service=1"])
 		#expect(run.exitCode == 64)
 
 		let envelope = try #require(

@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import { isMainThread } from 'node:worker_threads';
 import { buildArgs } from './args.ts';
 import { MacOcrError } from './errors.ts';
 import {
@@ -6,7 +7,7 @@ import {
 	waitForExit,
 	type Spawned,
 } from './process.ts';
-import { ocrWithService, shouldUseService } from './service/index.ts';
+import { ocrWithService } from './service/index.ts';
 import type { Input, OcrOptions, OcrResult } from './types.ts';
 
 const label = 'mac-ocr ocr';
@@ -44,7 +45,7 @@ const spawnOcr = (input: Input, options?: OcrOptions): Spawned => spawnBinary(
 );
 
 /** OCR a single image or single-page PDF. Throws if the input has multiple pages. */
-const ocrSingleProcess = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
+export const ocrSingleProcess = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
 	const spawned = spawnOcr(input, options);
 	let first: OcrResult | undefined;
 
@@ -85,7 +86,7 @@ const ocrSingleProcess = async (input: Input, options?: OcrOptions): Promise<Ocr
 };
 
 const ocrSingle = (input: Input, options?: OcrOptions): Promise<OcrResult> => (
-	shouldUseService()
+	isMainThread
 		? ocrWithService(input, options)
 		: ocrSingleProcess(input, options)
 );

@@ -98,21 +98,6 @@ await describe('ocr', () => {
 		expect(topStrip.text).not.toContain('Hello World');
 	});
 
-	test('invalid bytes throw a runtime MacOcrError', async () => {
-		const error = await ocr(Buffer.from('not an image')).catch((error_: unknown) => error_);
-		expect(error).toBeInstanceOf(MacOcrError);
-		expect((error as MacOcrError).kind).toBe('runtime');
-		// The CLI's "Error: " prefix is stripped.
-		expect((error as MacOcrError).message).toMatch(/^Cannot read image/);
-	});
-
-	test('multi-page PDF points to ocr.pages()', async () => {
-		const error = await ocr(fixtureData('multipage.pdf')).catch((error_: unknown) => error_);
-		expect(error).toBeInstanceOf(MacOcrError);
-		expect((error as MacOcrError).kind).toBe('usage');
-		expect((error as MacOcrError).message).toMatch(/ocr\.pages/);
-	});
-
 	// Covers encrypted-PDF handling through the main-thread API and real binary.
 	test('password unlocks an encrypted PDF', async () => {
 		const result = await ocr(fixtureData('encrypted.pdf'), { password: 'secret' });

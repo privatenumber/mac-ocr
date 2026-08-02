@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, test } from 'manten';
 import { isNativeHello } from '../../../src/service/protocol.ts';
 import { importWrapper } from '../../utils.ts';
+import { serviceShim } from './utils.ts';
 
 await describe('protocol', () => {
 	test('accepts service directories under a relative TMPDIR', () => {
@@ -12,7 +13,6 @@ await describe('protocol', () => {
 		try {
 			expect(isNativeHello({
 				type: 'hello',
-				protocolVersion: 1,
 				inputDirectory: path.join(
 					process.cwd(),
 					'mac-ocr-service-123-00000000-0000-0000-0000-000000000000',
@@ -42,34 +42,14 @@ setTimeout(() => {}, 30_000)
 	});
 
 	test('keeps stderr scoped to its structured response', async () => {
-		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
-const crypto = require('node:crypto')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
-fs.mkdirSync(directory, { mode: 0o700 })
-const frame = value => {
-  const payload = Buffer.from(JSON.stringify(value))
-  const header = Buffer.alloc(4)
-  header.writeUInt32LE(payload.length)
-  process.stdout.write(Buffer.concat([header, payload]))
-}
-frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
-let buffered = Buffer.alloc(0)
-process.stdin.on('data', chunk => {
-  buffered = Buffer.concat([buffered, chunk])
-  const length = buffered.readUInt32LE(0)
-  if (buffered.length < length + 4) return
-  const request = JSON.parse(buffered.subarray(4, length + 4))
-  process.stderr.write('diagnostic from another request\n')
-  frame({
-    id: request.id,
-    type: 'error',
-    error: { kind: 'usage', message: 'request failed', exitCode: null, stderr: '' },
-  })
-})
-`, { service: true });
+		await using wrapper = await importWrapper(serviceShim({
+			onRequest: String.raw`process.stderr.write('diagnostic from another request\n')
+frame({
+  id: request.id,
+  type: 'error',
+  error: { kind: 'usage', message: 'request failed', exitCode: null, stderr: '' },
+})`,
+		}), { service: true });
 		try {
 			const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
 			expect(error).toMatchObject({ stderr: '' });
@@ -79,31 +59,19 @@ process.stdin.on('data', chunk => {
 	});
 
 	test('rejects every response after an unknown request ID', async () => {
-		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
-const crypto = require('node:crypto')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
-fs.mkdirSync(directory, { mode: 0o700 })
-const frame = value => {
-  const payload = Buffer.from(JSON.stringify(value))
+		await using wrapper = await importWrapper(serviceShim({
+			onRequest: `const result = { page: 1, pageCount: 1, width: 1, height: 1, text: 'invalid success', observations: [] }
+const payload = value => {
+  const json = Buffer.from(JSON.stringify(value))
   const header = Buffer.alloc(4)
-  header.writeUInt32LE(payload.length)
-  return Buffer.concat([header, payload])
+  header.writeUInt32LE(json.length)
+  return Buffer.concat([header, json])
 }
-process.stdout.write(frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory }))
-process.stdin.once('data', chunk => {
-  const length = chunk.readUInt32LE(0)
-  const request = JSON.parse(chunk.subarray(4, length + 4))
-  const result = { page: 1, pageCount: 1, width: 1, height: 1, text: 'invalid success', observations: [] }
-  process.stdout.write(Buffer.concat([
-    frame({ id: request.id + 1, type: 'result', result }),
-    frame({ id: request.id, type: 'result', result }),
-  ]))
-})
-setTimeout(() => {}, 30_000)
-`, { service: true });
+process.stdout.write(Buffer.concat([
+  payload({ id: request.id + 1, type: 'result', result }),
+  payload({ id: request.id, type: 'result', result }),
+]))`,
+		}), { service: true });
 		try {
 			const outcome = await wrapper.api.ocr(Buffer.from('x')).catch((error: unknown) => error);
 			expect(outcome).toMatchObject({ kind: 'runtime' });
@@ -114,38 +82,21 @@ setTimeout(() => {}, 30_000)
 	});
 
 	test('bounds stderr retained across service requests', async () => {
-		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
-const crypto = require('node:crypto')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
-const directory = path.join(os.tmpdir(), 'mac-ocr-service-' + process.pid + '-' + crypto.randomUUID())
-fs.mkdirSync(directory, { mode: 0o700 })
-const frame = value => {
-  const payload = Buffer.from(JSON.stringify(value))
-  const header = Buffer.alloc(4)
-  header.writeUInt32LE(payload.length)
-  process.stdout.write(Buffer.concat([header, payload]))
-}
-frame({ type: 'hello', protocolVersion: 1, inputDirectory: directory })
-const diagnostic = Buffer.alloc(1024 * 1024, 120)
-let requestCount = 0
-process.stdin.on('data', chunk => {
-  const length = chunk.readUInt32LE(0)
-  const request = JSON.parse(chunk.subarray(4, length + 4))
-  requestCount += 1
-  process.stderr.write(diagnostic, () => {
-    if (requestCount === 5) {
-      process.exit(1)
-    }
-    frame({
-      id: request.id,
-      type: 'result',
-      result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
-    })
+		await using wrapper = await importWrapper(serviceShim({
+			setup: `const diagnostic = Buffer.alloc(1024 * 1024, 120)
+let requestCount = 0`,
+			onRequest: `requestCount += 1
+process.stderr.write(diagnostic, () => {
+  if (requestCount === 5) {
+    process.exit(1)
+  }
+  frame({
+    id: request.id,
+    type: 'result',
+    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
   })
-})
-`, { service: true });
+})`,
+		}), { service: true });
 		for (let index = 0; index < 4; index += 1) {
 			await wrapper.api.ocr(Buffer.from('x'));
 		}

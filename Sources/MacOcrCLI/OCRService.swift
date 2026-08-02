@@ -12,7 +12,6 @@ private let serviceParentCleanupRetryNanoseconds: UInt64 = 100_000_000
 
 private struct ServiceHello: Encodable {
 	let type = "hello"
-	let protocolVersion: Int
 	let inputDirectory: String
 }
 
@@ -308,10 +307,9 @@ private func terminateService(_ error: Error) -> Never {
 }
 
 public enum OCRService {
-	public static let protocolVersion = 1
-
 	public static func run() async throws {
 		cleanStaleServiceInputDirectories()
+		// A replacement can start before a killed predecessor's PID becomes stale.
 		Task.detached(priority: .background) {
 			try? await Task.sleep(nanoseconds: 1_000_000_000)
 			cleanStaleServiceInputDirectories()
@@ -330,7 +328,6 @@ public enum OCRService {
 		monitorServiceParent(getppid(), inputDirectory: inputDirectory)
 		try writeServiceFrame(
 			ServiceHello(
-				protocolVersion: protocolVersion,
 				inputDirectory: inputDirectory.path
 			))
 		let decoder = JSONDecoder()
