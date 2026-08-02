@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { addAbortListener } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isMainThread } from 'node:worker_threads';
@@ -27,7 +28,7 @@ type QueuedOcrRequest = {
 	signal?: AbortSignal;
 	resolve: (result: OcrResult) => void;
 	reject: (error: unknown) => void;
-	settleAbortListener?: () => void;
+	abortSubscription?: ReturnType<typeof addAbortListener>;
 };
 
 let serviceEnabled = true;
@@ -82,9 +83,8 @@ const releaseRequestInput = (request: QueuedOcrRequest): void => {
 };
 
 const removeQueuedAbortListener = (request: QueuedOcrRequest): void => {
-	if (request.signal && request.settleAbortListener) {
-		request.signal.removeEventListener('abort', request.settleAbortListener);
-	}
+	request.abortSubscription?.[Symbol.dispose]();
+	request.abortSubscription = undefined;
 };
 
 const rejectQueuedOcrRequests = (error: unknown): void => {
@@ -203,7 +203,7 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 		reject,
 	};
 	if (signal) {
-		request.settleAbortListener = () => {
+		request.abortSubscription = addAbortListener(signal, () => {
 			const index = queuedOcrRequests.indexOf(request);
 			if (index === -1) {
 				return;
@@ -212,8 +212,7 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 			removeQueuedAbortListener(request);
 			releaseRequestInput(request);
 			request.reject(serviceAbortFailure());
-		};
-		signal.addEventListener('abort', request.settleAbortListener, { once: true });
+		});
 	}
 	queuedOcrRequests.push(request);
 	if (!serviceQueueRunning) {

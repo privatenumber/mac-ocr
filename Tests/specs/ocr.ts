@@ -2,11 +2,9 @@ import { describe, test, expect } from 'manten';
 import { ocr, MacOcrError } from '../../src/index.ts';
 import { fixtureData } from '../utils.ts';
 
-// Tests are awaited (sequential) so at most one Vision subprocess runs at a
-// time — concurrent Vision processes contend for the ANE (the same reason the
-// Swift suite runs --no-parallel).
-await describe('ocr', async () => {
-	await test('recognizes text from bytes', async () => {
+// Main-thread `ocr()` serializes Vision requests through its shared service.
+await describe('ocr', () => {
+	test('recognizes text from bytes', async () => {
 		const result = await ocr(fixtureData('hello.png'));
 		expect(result.text).toContain('Hello World');
 		expect(result.page).toBe(1);
@@ -18,7 +16,7 @@ await describe('ocr', async () => {
 		expect('source' in result).toBe(false);
 	});
 
-	await test('returns observations with bounding boxes', async () => {
+	test('returns observations with bounding boxes', async () => {
 		const { observations } = await ocr(fixtureData('hello.png'));
 		const [observation] = observations;
 		expect(observation.text).toContain('Hello World');
@@ -31,7 +29,7 @@ await describe('ocr', async () => {
 		expect(observation.candidates).toBeUndefined();
 	});
 
-	await test('maxCandidates > 1 includes alternative candidates', async () => {
+	test('maxCandidates > 1 includes alternative candidates', async () => {
 		const { observations } = await ocr(fixtureData('hello.png'), { maxCandidates: 3 });
 		const [observation] = observations;
 		const candidates = observation.candidates ?? [];
@@ -40,13 +38,13 @@ await describe('ocr', async () => {
 		expect(candidates[0].text).toBe(observation.text);
 	});
 
-	await test('empty image returns no text', async () => {
+	test('empty image returns no text', async () => {
 		const result = await ocr(fixtureData('empty.png'));
 		expect(result.text).toBe('');
 		expect(result.observations).toHaveLength(0);
 	});
 
-	await test('accepts Buffer, Uint8Array, and ArrayBuffer', async () => {
+	test('accepts Buffer, Uint8Array, and ArrayBuffer', async () => {
 		const buffer = fixtureData('hello.png');
 		const uint8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 		const arrayBuffer = buffer.buffer.slice(
@@ -62,31 +60,31 @@ await describe('ocr', async () => {
 		expect(fromArrayBuffer.text).toContain('Hello World');
 	});
 
-	await test('rejects non-bytes input', async () => {
+	test('rejects non-bytes input', async () => {
 		await expect(ocr('photo.png' as never)).rejects.toThrow(/Buffer, Uint8Array, or ArrayBuffer/);
 	});
 
-	await test('fast option', async () => {
+	test('fast option', async () => {
 		const result = await ocr(fixtureData('hello.png'), { fast: true });
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('languages option', async () => {
+	test('languages option', async () => {
 		const result = await ocr(fixtureData('hello.png'), { languages: ['en-US'] });
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('customWords option', async () => {
+	test('customWords option', async () => {
 		const result = await ocr(fixtureData('hello.png'), { customWords: ['Hello'] });
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('languageCorrection: false', async () => {
+	test('languageCorrection: false', async () => {
 		const result = await ocr(fixtureData('hello.png'), { languageCorrection: false });
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('regionOfInterest restricts recognition', async () => {
+	test('regionOfInterest restricts recognition', async () => {
 		const full = await ocr(fixtureData('hello.png'), {
 			regionOfInterest: {
 				x: 0,
@@ -100,7 +98,7 @@ await describe('ocr', async () => {
 		expect(topStrip.text).not.toContain('Hello World');
 	});
 
-	await test('invalid bytes throw a runtime MacOcrError', async () => {
+	test('invalid bytes throw a runtime MacOcrError', async () => {
 		const error = await ocr(Buffer.from('not an image')).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(MacOcrError);
 		expect((error as MacOcrError).kind).toBe('runtime');
@@ -108,7 +106,7 @@ await describe('ocr', async () => {
 		expect((error as MacOcrError).message).toMatch(/^Cannot read image/);
 	});
 
-	await test('multi-page PDF points to ocr.pages()', async () => {
+	test('multi-page PDF points to ocr.pages()', async () => {
 		const error = await ocr(fixtureData('multipage.pdf')).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(MacOcrError);
 		expect((error as MacOcrError).kind).toBe('usage');
@@ -116,19 +114,19 @@ await describe('ocr', async () => {
 	});
 
 	// Covers encrypted-PDF handling through the main-thread API and real binary.
-	await test('password unlocks an encrypted PDF', async () => {
+	test('password unlocks an encrypted PDF', async () => {
 		const result = await ocr(fixtureData('encrypted.pdf'), { password: 'secret' });
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('encrypted PDF without a password throws a runtime MacOcrError', async () => {
+	test('encrypted PDF without a password throws a runtime MacOcrError', async () => {
 		const error = await ocr(fixtureData('encrypted.pdf')).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(MacOcrError);
 		expect((error as MacOcrError).kind).toBe('runtime');
 		expect((error as MacOcrError).message).toMatch(/^PDF is password protected/);
 	});
 
-	await test('wrong password throws a runtime MacOcrError with the envelope mapped', async () => {
+	test('wrong password throws a runtime MacOcrError with the envelope mapped', async () => {
 		const error = await ocr(fixtureData('encrypted.pdf'), { password: 'wrong' }).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(MacOcrError);
 		const macOcrError = error as MacOcrError;

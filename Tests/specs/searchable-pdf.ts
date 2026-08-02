@@ -4,32 +4,32 @@ import { fixtureData } from '../utils.ts';
 
 const pdfHeader = (bytes: Uint8Array): string => Buffer.from(bytes.subarray(0, 5)).toString('utf8');
 
-await describe('createSearchablePdf', async () => {
-	await test('produces a PDF from an image', async () => {
+await describe('createSearchablePdf', () => {
+	test('produces a PDF from an image', async () => {
 		const pdf = await createSearchablePdf(fixtureData('hello.png'));
 		expect(pdf).toBeInstanceOf(Uint8Array);
 		expect(pdfHeader(pdf)).toBe('%PDF-');
 		expect(pdf.length).toBeGreaterThan(0);
 	});
 
-	await test('produces a PDF from a multi-page PDF', async () => {
+	test('produces a PDF from a multi-page PDF', async () => {
 		const pdf = await createSearchablePdf(fixtureData('multipage.pdf'));
 		expect(pdfHeader(pdf)).toBe('%PDF-');
 	});
 
-	await test('forwards options', async () => {
+	test('forwards options', async () => {
 		const pdf = await createSearchablePdf(fixtureData('hello.png'), { fast: true });
 		expect(pdfHeader(pdf)).toBe('%PDF-');
 	});
 
-	await test('forwards ocrAllPages', async () => {
+	test('forwards ocrAllPages', async () => {
 		const pdf = await createSearchablePdf(fixtureData('hello.png'), { ocrAllPages: true });
 		expect(pdfHeader(pdf)).toBe('%PDF-');
 	});
 
-	await test('rejects invalid bytes', async () => {
+	test('rejects invalid bytes', async () => {
 		const error = await createSearchablePdf(Buffer.from('not an image')).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(MacOcrError);
 		expect((error as MacOcrError).kind).toBe('runtime');
 	});
-});
+}, { parallel: false });

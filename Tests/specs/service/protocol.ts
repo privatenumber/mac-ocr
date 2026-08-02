@@ -5,8 +5,8 @@ import { describe, expect, test } from 'manten';
 import { isNativeHello } from '../../../src/service/protocol.ts';
 import { importWrapper } from '../../utils.ts';
 
-await describe('protocol', async () => {
-	await test('accepts service directories under a relative TMPDIR', () => {
+await describe('protocol', () => {
+	test('accepts service directories under a relative TMPDIR', () => {
 		const previous = process.env.TMPDIR;
 		process.env.TMPDIR = '.';
 		try {
@@ -27,7 +27,7 @@ await describe('protocol', async () => {
 		}
 	});
 
-	await test('rejects malformed protocol frames instead of crashing', async () => {
+	test('rejects malformed protocol frames instead of crashing', async () => {
 		await using wrapper = await importWrapper(`#!/usr/bin/env node
 const payload = Buffer.from('null')
 const header = Buffer.alloc(4)
@@ -41,7 +41,7 @@ setTimeout(() => {}, 30_000)
 		expect((error as Error).message).toMatch(/invalid hello frame/);
 	});
 
-	await test('keeps stderr scoped to its structured response', async () => {
+	test('keeps stderr scoped to its structured response', async () => {
 		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -78,7 +78,7 @@ process.stdin.on('data', chunk => {
 		}
 	});
 
-	await test('rejects every response after an unknown request ID', async () => {
+	test('rejects every response after an unknown request ID', async () => {
 		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -113,7 +113,7 @@ setTimeout(() => {}, 30_000)
 		}
 	});
 
-	await test('bounds stderr retained across service requests', async () => {
+	test('bounds stderr retained across service requests', async () => {
 		await using wrapper = await importWrapper(String.raw`#!/usr/bin/env node
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -154,7 +154,7 @@ process.stdin.on('data', chunk => {
 		expect(Buffer.byteLength((error as { stderr: string }).stderr)).toBeLessThanOrEqual(64 * 1024);
 	});
 
-	await test('releases oversized frame buffers after draining', async () => {
+	test('releases oversized frame buffers after draining', async () => {
 		const protocolUrl = new URL('../../../src/service/protocol.ts', import.meta.url).href;
 		const source = `
 import { createFrameDecoder } from ${JSON.stringify(protocolUrl)}
@@ -190,4 +190,4 @@ process.stdout.write(String(process.memoryUsage().arrayBuffers - baseline))
 		expect(stderr).toBe('');
 		expect(Number(stdout)).toBeLessThan(5 * 1024 * 1024);
 	});
-});
+}, { parallel: 2 });

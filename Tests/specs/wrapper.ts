@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
+import { once } from 'node:events';
+import { text } from 'node:stream/consumers';
+import { setTimeout } from 'node:timers/promises';
 import { describe, test, expect } from 'manten';
 import { buildArgs } from '../../src/args.ts';
 import type { MacOcrError } from '../../src/index.ts';
@@ -15,12 +17,12 @@ import { importWrapper } from '../utils.ts';
 
 const shShim = (script: string): string => `#!/bin/sh\n${script}\n`;
 
-const jsonlLine = (page: number, pageCount: number, text: string): string => JSON.stringify({
+const jsonlLine = (page: number, pageCount: number, content: string): string => JSON.stringify({
 	page,
 	pageCount,
 	width: 1,
 	height: 1,
-	text,
+	text: content,
 	observations: [],
 });
 
@@ -33,14 +35,13 @@ const stallingShim = '#!/usr/bin/env node\n'
 	+ `console.log(${JSON.stringify(jsonlLine(1, 3, 'one'))});\n`
 	+ 'setTimeout(() => {}, 30_000);\n';
 
-const pgrep = (pattern: string): Promise<string> => new Promise((resolve) => {
+const pgrep = async (pattern: string): Promise<string> => {
 	const check = spawn('pgrep', ['-f', pattern]);
-	let found = '';
-	check.stdout.on('data', (chunk) => {
-		found += chunk;
-	});
-	check.on('close', () => resolve(found.trim()));
-});
+	const output = text(check.stdout);
+	await once(check, 'close');
+	const result = await output;
+	return result.trim();
+};
 
 /**
  * Assert the shim process is gone. The wrapper dispatches the kill before the
@@ -51,7 +52,7 @@ const expectNoLingeringShim = async (marker: string): Promise<void> => {
 	const deadline = Date.now() + 2000;
 	let leftover = await pgrep(marker);
 	while (leftover && Date.now() < deadline) {
-		await delay(50);
+		await setTimeout(50);
 		leftover = await pgrep(marker);
 	}
 	expect(leftover).toBe('');

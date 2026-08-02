@@ -1,4 +1,5 @@
 import childProcess from 'node:child_process';
+import { addAbortListener } from 'node:events';
 import fs from 'node:fs/promises';
 import { MacOcrError } from '../errors.ts';
 import { binaryPath } from '../process.ts';
@@ -23,7 +24,7 @@ type PendingRequest = {
 	resolve: (result: OcrResult) => void;
 	reject: (error: unknown) => void;
 	signal?: AbortSignal;
-	cancelAbortListener?: () => void;
+	abortSubscription?: ReturnType<typeof addAbortListener>;
 	cancelGraceTimer?: NodeJS.Timeout;
 };
 
@@ -121,9 +122,8 @@ const startNativeService = (
 		}
 	};
 	const detachPendingCancellation = (request: PendingRequest): void => {
-		if (request.signal && request.cancelAbortListener) {
-			request.signal.removeEventListener('abort', request.cancelAbortListener);
-		}
+		request.abortSubscription?.[Symbol.dispose]();
+		request.abortSubscription = undefined;
 		if (request.cancelGraceTimer) {
 			clearTimeout(request.cancelGraceTimer);
 			request.cancelGraceTimer = undefined;
@@ -296,9 +296,14 @@ const startNativeService = (
 				arguments: arguments_,
 				password,
 			});
-			let cancelAbortListener: (() => void) | undefined;
+			pending = {
+				id,
+				resolve,
+				reject,
+				signal,
+			};
 			if (signal) {
-				cancelAbortListener = () => {
+				pending.abortSubscription = addAbortListener(signal, () => {
 					const request = pending;
 					if (request?.id !== id) {
 						return;
@@ -323,17 +328,7 @@ const startNativeService = (
 							recordTransportError(error);
 						}
 					});
-				};
-			}
-			pending = {
-				id,
-				resolve,
-				reject,
-				signal,
-				cancelAbortListener,
-			};
-			if (cancelAbortListener) {
-				signal!.addEventListener('abort', cancelAbortListener, { once: true });
+				});
 			}
 			// The child alone keeps Node alive while this request is active.
 			subprocess.ref();

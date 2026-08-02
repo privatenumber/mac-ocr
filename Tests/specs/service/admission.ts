@@ -1,11 +1,11 @@
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout } from 'node:timers/promises';
 import { describe, expect, test } from 'manten';
 import { importWrapper } from '../../utils.ts';
 
 const stalledService = '#!/usr/bin/env node\nsetTimeout(() => {}, 30_000)\n';
 
-await describe('admission', async () => {
-	await test('rejects queued input beyond the byte budget', async () => {
+await describe('admission', () => {
+	test('rejects queued input beyond the byte budget', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const input = Buffer.alloc(1024 * 1024);
 		const requests = Array.from(
@@ -15,7 +15,7 @@ await describe('admission', async () => {
 		try {
 			const outcome = await Promise.race([
 				requests.at(-1)!,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			]);
 			expect(outcome).toMatchObject({
 				kind: 'runtime',
@@ -27,7 +27,7 @@ await describe('admission', async () => {
 		}
 	});
 
-	await test('accounts for backing storage retained by byte views', async () => {
+	test('accounts for backing storage retained by byte views', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const requests = Array.from(
 			{ length: 33 },
@@ -38,7 +38,7 @@ await describe('admission', async () => {
 		try {
 			const outcome = await Promise.race([
 				requests.at(-1)!,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			]);
 			expect(outcome).toMatchObject({
 				kind: 'runtime',
@@ -50,7 +50,7 @@ await describe('admission', async () => {
 		}
 	});
 
-	await test('accounts for metadata retained by queued requests', async () => {
+	test('accounts for metadata retained by queued requests', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const requests = Array.from(
 			{ length: 33 },
@@ -61,7 +61,7 @@ await describe('admission', async () => {
 		try {
 			const outcome = await Promise.race([
 				requests.at(-1)!,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			]);
 			expect(outcome).toMatchObject({
 				kind: 'runtime',
@@ -73,7 +73,7 @@ await describe('admission', async () => {
 		}
 	});
 
-	await test('rejects malformed metadata without poisoning admission state', async () => {
+	test('rejects malformed metadata without poisoning admission state', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const pending: Promise<unknown>[] = [];
 		try {
@@ -83,7 +83,7 @@ await describe('admission', async () => {
 			pending.push(malformed);
 			expect(await Promise.race([
 				malformed,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			])).toBeInstanceOf(TypeError);
 
 			const input = Buffer.alloc(1024 * 1024);
@@ -94,7 +94,7 @@ await describe('admission', async () => {
 			pending.push(...requests);
 			expect(await Promise.race([
 				requests.at(-1)!,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			])).toMatchObject({
 				kind: 'runtime',
 				code: 'queue_capacity_exceeded',
@@ -105,7 +105,7 @@ await describe('admission', async () => {
 		}
 	});
 
-	await test('rejects queued requests beyond the count budget', async () => {
+	test('rejects queued requests beyond the count budget', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const requests = Array.from(
 			{ length: 513 },
@@ -114,7 +114,7 @@ await describe('admission', async () => {
 		try {
 			const outcome = await Promise.race([
 				requests.at(-1)!,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			]);
 			expect(outcome).toMatchObject({
 				kind: 'runtime',
@@ -126,7 +126,7 @@ await describe('admission', async () => {
 		}
 	});
 
-	await test('releases queued capacity when a request is aborted', async () => {
+	test('releases queued capacity when a request is aborted', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const input = Buffer.alloc(1024 * 1024);
 		const requests = Array.from(
@@ -145,7 +145,7 @@ await describe('admission', async () => {
 		try {
 			expect(await Promise.race([
 				replacement,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			])).toBe('pending');
 		} finally {
 			wrapper.serviceApi.stopService();
@@ -153,7 +153,7 @@ await describe('admission', async () => {
 		}
 	});
 
-	await test('allows one oversized input when no other input is unstaged', async () => {
+	test('allows one oversized input when no other input is unstaged', async () => {
 		await using wrapper = await importWrapper(stalledService, { service: true });
 		const request = wrapper.api.ocr(
 			Buffer.alloc(65 * 1024 * 1024),
@@ -161,11 +161,11 @@ await describe('admission', async () => {
 		try {
 			expect(await Promise.race([
 				request,
-				delay(100, 'pending'),
+				setTimeout(100, 'pending'),
 			])).toBe('pending');
 		} finally {
 			wrapper.serviceApi.stopService();
 			await request;
 		}
 	});
-});
+}, { parallel: 2 });

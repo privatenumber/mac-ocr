@@ -3,7 +3,6 @@ import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { describe, expect, test } from 'manten';
@@ -13,8 +12,8 @@ import {
 } from '../../../src/service/index.ts';
 import { processExists, serviceDirectories, waitFor } from './utils.ts';
 
-await describe('ownership', async () => {
-	await test('stops and removes staged inputs when its Node parent exits', async () => {
+await describe('ownership', () => {
+	test('stops and removes staged inputs when its Node parent exits', async () => {
 		stopService();
 		await waitFor(
 			() => servicePidForTesting() === undefined,
@@ -44,11 +43,13 @@ process.exit(0)
 			stderr += chunk;
 		});
 		try {
-			const servicePid = await new Promise<number>((resolve, reject) => {
-				parent.once('error', reject);
-				parent.stdout.once('data', chunk => resolve(Number(chunk)));
-				parent.once('close', code => reject(new Error(`Helper exited ${code}: ${stderr}`)));
-			});
+			const close = once(parent, 'close');
+			const servicePid = await Promise.race([
+				once(parent.stdout, 'data').then(([chunk]) => Number(chunk)),
+				close.then(([code]) => {
+					throw new Error(`Helper exited ${code}: ${stderr}`);
+				}),
+			]);
 			expect(servicePid).toBeGreaterThan(0);
 			let serviceDirectory: string | undefined;
 			await waitFor(
@@ -65,7 +66,6 @@ process.exit(0)
 				},
 				'Expected active work to have a staged input',
 			);
-			const close = once(parent, 'close');
 			parent.stdin.end();
 			const [code] = await close;
 			expect(code).toBe(0);
@@ -89,7 +89,8 @@ process.exit(0)
 		}
 	});
 
-	await test('does not keep Node alive after becoming idle', async () => {
+	test('does not keep Node alive after becoming idle', async (context) => {
+		const signal = context?.signal ?? AbortSignal.abort();
 		const indexUrl = pathToFileURL(new URL('../../../src/index.ts', import.meta.url).pathname).href;
 		const fixtureUrl = pathToFileURL(
 			new URL('../../fixtures/hello.png', import.meta.url).pathname,
@@ -104,27 +105,17 @@ await ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
 			'--eval',
 			source,
 		], { stdio: ['ignore', 'ignore', 'pipe'] });
-		let stderr = '';
-		child.stderr.on('data', (chunk) => {
-			stderr += chunk;
-		});
 		try {
-			const outcome = await Promise.race([
-				once(child, 'close'),
-				delay(2000, 'timeout'),
-			]);
-			if (outcome === 'timeout') {
-				throw new Error(`Idle service kept Node alive: ${stderr}`);
-			}
-			expect(outcome).toStrictEqual([0, null]);
+			const [code, signalName] = await once(child, 'close', { signal });
+			expect([code, signalName]).toStrictEqual([0, null]);
 		} finally {
 			if (child.exitCode === null) {
 				child.kill();
 			}
 		}
-	});
+	}, 2000);
 
-	await test('keeps worker-thread calls on the one-shot path', async () => {
+	test('keeps worker-thread calls on the one-shot path', async () => {
 		const indexUrl = pathToFileURL(new URL('../../../src/index.ts', import.meta.url).pathname).href;
 		const serviceUrl = pathToFileURL(
 			new URL('../../../src/service/index.ts', import.meta.url).pathname,
@@ -150,4 +141,4 @@ parentPort.postMessage([result.text.includes('Hello World'), servicePidForTestin
 			await worker.terminate();
 		}
 	});
-});
+}, { parallel: false });

@@ -18,15 +18,15 @@ const waitForServiceStop = async (): Promise<void> => waitFor(
 	'mac-ocr service did not stop',
 );
 
-await describe('recovery', async () => {
-	await test('rejects cleanly when the service binary cannot spawn', async () => {
+await describe('recovery', () => {
+	test('rejects cleanly when the service binary cannot spawn', async () => {
 		await using wrapper = await importWrapper(undefined, { service: true });
 		const error = await wrapper.api.ocr(Buffer.from('dummy')).catch((error_: unknown) => error_);
 		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
 		expect((error as MacOcrError).kind).toBe('spawn');
 	});
 
-	await test('preserves an early service exit code', async () => {
+	test('preserves an early service exit code', async () => {
 		await using wrapper = await importWrapper(
 			'#!/usr/bin/env node\nprocess.exit(7)\n',
 			{ service: true },
@@ -40,7 +40,7 @@ await describe('recovery', async () => {
 		expect((error as Error).message).toMatch(/code 7/);
 	});
 
-	await test('preserves exit status after a request write fails', async () => {
+	test('preserves exit status after a request write fails', async () => {
 		await using wrapper = await importWrapper(`#!/usr/bin/env node
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -65,7 +65,7 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 		expect((error as Error).message).toMatch(/code 7/);
 	});
 
-	await test('rejects pending work and lazily restarts after a crash', async () => {
+	test('rejects pending work and lazily restarts after a crash', async () => {
 		const pid = await ensureServiceForTesting();
 		const pending = Array.from(
 			{ length: 8 },
@@ -93,7 +93,7 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 		);
 	});
 
-	await test('restarts after losing the service input directory', async () => {
+	test('restarts after losing the service input directory', async () => {
 		await using wrapper = await importWrapper(`#!/usr/bin/env node
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -137,7 +137,7 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 		expect(second).toMatchObject({ text: 'recovered' });
 	});
 
-	await test('can stop and lazily restart the internal singleton', async () => {
+	test('can stop and lazily restart the internal singleton', async () => {
 		const pid = await ensureServiceForTesting();
 		stopService();
 		await waitForServiceStop();
@@ -146,7 +146,7 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 		expect(servicePidForTesting()).not.toBe(pid);
 	});
 
-	await test('can stop a service that is still starting', async () => {
+	test('can stop a service that is still starting', async () => {
 		await using wrapper = await importWrapper(
 			'#!/usr/bin/env node\nsetTimeout(() => {}, 30_000)\n',
 			{ service: true },
@@ -164,4 +164,4 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 			'Expected the starting service process to stop',
 		);
 	});
-});
+}, { parallel: false });

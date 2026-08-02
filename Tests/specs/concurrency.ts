@@ -9,7 +9,7 @@ import { fixtureData } from '../utils.ts';
  * corrupting results or process lifecycle.
  */
 await describe('concurrency', async () => {
-	await test('a parallel burst of mixed calls all resolve correctly', async () => {
+	test('a parallel burst of mixed calls all resolve correctly', async () => {
 		const hello = fixtureData('hello.png');
 		const multipage = fixtureData('multipage.pdf');
 

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout } from 'node:timers/promises';
 import { ocr } from '../../../src/index.ts';
 import { servicePidForTesting } from '../../../src/service/index.ts';
 import { fixtureData } from '../../utils.ts';
@@ -21,7 +21,7 @@ export const waitFor = async (
 ): Promise<void> => {
 	const deadline = Date.now() + timeoutMilliseconds;
 	while (!await condition() && Date.now() < deadline) {
-		await delay(20);
+		await setTimeout(20);
 	}
 	if (!await condition()) {
 		throw new Error(message);

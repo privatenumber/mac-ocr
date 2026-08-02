@@ -15,8 +15,8 @@ import {
 	waitFor,
 } from './utils.ts';
 
-await describe('requests', async () => {
-	await test('reuses one hidden process across calls', async () => {
+await describe('requests', () => {
+	test('reuses one hidden process across calls', async () => {
 		stopService();
 		const first = await ocr(fixtureData('hello.png'));
 		const firstPid = servicePidForTesting();
@@ -27,7 +27,7 @@ await describe('requests', async () => {
 		expect(servicePidForTesting()).toBe(firstPid);
 	});
 
-	await test('serializes concurrent calls through the same service', async () => {
+	test('serializes concurrent calls through the same service', async () => {
 		const pid = await ensureServiceForTesting();
 		const pending = Array.from(
 			{ length: 8 },
@@ -51,7 +51,7 @@ await describe('requests', async () => {
 		expect(servicePidForTesting()).toBe(pid);
 	});
 
-	await test('preserves runtime errors and keeps the service alive', async () => {
+	test('preserves runtime errors and keeps the service alive', async () => {
 		const pid = await ensureServiceForTesting();
 		const error = await ocr(Buffer.from('not an image')).catch((error_: unknown) => error_);
 		expect(error).toMatchObject({
@@ -65,7 +65,7 @@ await describe('requests', async () => {
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('preserves the wrapper-synthesized multi-page usage error', async () => {
+	test('preserves the wrapper-synthesized multi-page usage error', async () => {
 		const pid = await ensureServiceForTesting();
 		const error = await ocr(fixtureData('multipage.pdf')).catch((error_: unknown) => error_);
 		expect(error).toMatchObject({
@@ -76,7 +76,7 @@ await describe('requests', async () => {
 		expect(servicePidForTesting()).toBe(pid);
 	});
 
-	await test('preserves complete ArgumentParser usage diagnostics', async () => {
+	test('preserves complete ArgumentParser usage diagnostics', async () => {
 		const error = await ocr(
 			fixtureData('hello.png'),
 			{ confidence: 2 },
@@ -88,7 +88,7 @@ await describe('requests', async () => {
 		});
 	});
 
-	await test('reads the ambient PDF password for each request', async () => {
+	test('reads the ambient PDF password for each request', async () => {
 		const previous = process.env.MAC_OCR_PDF_PASSWORD;
 		process.env.MAC_OCR_PDF_PASSWORD = 'secret';
 		const resultPromise = ocr(fixtureData('encrypted.pdf'));
@@ -101,7 +101,7 @@ await describe('requests', async () => {
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('snapshots mutable options before queueing', async () => {
+	test('snapshots mutable options before queueing', async () => {
 		const options = { languages: ['en-US'] };
 		const resultPromise = ocr(fixtureData('hello.png'), options);
 		options.languages = ['klingon'];
@@ -109,10 +109,10 @@ await describe('requests', async () => {
 		expect(result.text).toContain('Hello World');
 	});
 
-	await test('normalizes protocol strings to well-formed Unicode', async () => {
+	test('normalizes protocol strings to well-formed Unicode', async () => {
 		const pid = await ensureServiceForTesting();
 		const result = await ocr(fixtureData('hello.png'), { password: '\uD800' });
 		expect(result.text).toContain('Hello World');
 		expect(servicePidForTesting()).toBe(pid);
 	});
-});
+}, { parallel: false });
