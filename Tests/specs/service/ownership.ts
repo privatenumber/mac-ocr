@@ -10,7 +10,8 @@ import {
 	servicePidForTesting,
 	stopService,
 } from '../../../src/service/index.ts';
-import { processExists, serviceDirectories, waitFor } from './utils.ts';
+import { processExists } from '../../utils.ts';
+import { serviceDirectories, waitFor } from './utils.ts';
 
 await describe('ownership', () => {
 	test('stops and removes staged inputs when its Node parent exits', async () => {

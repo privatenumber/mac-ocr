@@ -164,8 +164,6 @@ const drainServiceQueue = async (): Promise<void> => {
 				request.resolve(result);
 			} catch (error) {
 				request.reject(error);
-			} finally {
-				removeQueuedAbortListener(request);
 			}
 		}
 	} finally {

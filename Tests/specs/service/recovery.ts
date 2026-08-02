@@ -12,11 +12,6 @@ import {
 	waitFor,
 } from './utils.ts';
 
-const waitForServiceStop = async (): Promise<void> => waitFor(
-	() => servicePidForTesting() === undefined,
-	'mac-ocr service did not stop',
-);
-
 await describe('recovery', () => {
 	test('rejects cleanly when the service binary cannot spawn', async () => {
 		await using wrapper = await importWrapper(undefined, { service: true });
@@ -77,7 +72,10 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 		process.kill(pid, 'SIGKILL');
 		const outcomes = await Promise.allSettled(pending);
 		expect(outcomes.some(outcome => outcome.status === 'rejected')).toBe(true);
-		await waitForServiceStop();
+		await waitFor(
+			() => servicePidForTesting() === undefined,
+			'mac-ocr service did not stop',
+		);
 		const result = await ocr(fixtureData('hello.png'));
 		expect(result.text).toContain('Hello World');
 		expect(servicePidForTesting()).not.toBe(pid);

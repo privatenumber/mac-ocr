@@ -50,12 +50,8 @@ frame({
   error: { kind: 'usage', message: 'request failed', exitCode: null, stderr: '' },
 })`,
 		}), { service: true });
-		try {
-			const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
-			expect(error).toMatchObject({ stderr: '' });
-		} finally {
-			wrapper.serviceApi.stopService();
-		}
+		const error = await wrapper.api.ocr(Buffer.from('x')).catch((error_: unknown) => error_);
+		expect(error).toMatchObject({ stderr: '' });
 	});
 
 	test('rejects every response after an unknown request ID', async () => {
@@ -72,13 +68,9 @@ process.stdout.write(Buffer.concat([
   payload({ id: request.id, type: 'result', result }),
 ]))`,
 		}), { service: true });
-		try {
-			const outcome = await wrapper.api.ocr(Buffer.from('x')).catch((error: unknown) => error);
-			expect(outcome).toMatchObject({ kind: 'runtime' });
-			expect((outcome as Error).message).toMatch(/unknown request ID/);
-		} finally {
-			wrapper.serviceApi.stopService();
-		}
+		const outcome = await wrapper.api.ocr(Buffer.from('x')).catch((error: unknown) => error);
+		expect(outcome).toMatchObject({ kind: 'runtime' });
+		expect((outcome as Error).message).toMatch(/unknown request ID/);
 	});
 
 	test('bounds stderr retained across service requests', async () => {

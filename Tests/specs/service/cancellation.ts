@@ -6,10 +6,9 @@ import {
 	pendingServiceRequestsForTesting,
 	servicePidForTesting,
 } from '../../../src/service/index.ts';
-import { fixtureData, importWrapper } from '../../utils.ts';
+import { fixtureData, importWrapper, processExists } from '../../utils.ts';
 import {
 	ensureServiceForTesting,
-	processExists,
 	serviceShim,
 	waitFor,
 } from './utils.ts';
@@ -32,42 +31,38 @@ await describe('cancellation', () => {
 		await using wrapper = await importWrapper(`#!/usr/bin/env node
 setTimeout(() => {}, 30_000)
 `, { service: true });
-		try {
-			const controller = new AbortController();
-			controller.signal.addEventListener('abort', event => event.stopImmediatePropagation());
-			const first = wrapper.api.ocr(
-				Buffer.from('first'),
-				{ signal: controller.signal },
-			).catch((error: unknown) => error);
-			await waitFor(
-				() => wrapper.serviceApi.startingServicePidForTesting() !== undefined,
-				'Expected the stalled service process to start',
-			);
-			const firstPid = wrapper.serviceApi.startingServicePidForTesting()!;
-			await fs.writeFile(wrapper.binaryPath, serviceShim({
-				onRequest: `if (request.command === 'ocr') {
+		const controller = new AbortController();
+		controller.signal.addEventListener('abort', event => event.stopImmediatePropagation());
+		const first = wrapper.api.ocr(
+			Buffer.from('first'),
+			{ signal: controller.signal },
+		).catch((error: unknown) => error);
+		await waitFor(
+			() => wrapper.serviceApi.startingServicePidForTesting() !== undefined,
+			'Expected the stalled service process to start',
+		);
+		const firstPid = wrapper.serviceApi.startingServicePidForTesting()!;
+		await fs.writeFile(wrapper.binaryPath, serviceShim({
+			onRequest: `if (request.command === 'ocr') {
   frame({
     id: request.id,
     type: 'result',
     result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
   })
 }`,
-			}));
-			const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
-			controller.abort();
-			expect(await first).toMatchObject({ kind: 'abort' });
-			await waitFor(
-				() => !processExists(firstPid),
-				'Expected the aborted startup process to stop',
-			);
-			const result = await Promise.race([
-				second,
-				setTimeout(2000, 'timeout'),
-			]);
-			expect(result).toMatchObject({ text: 'ok' });
-		} finally {
-			wrapper.serviceApi.stopService();
-		}
+		}));
+		const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
+		controller.abort();
+		expect(await first).toMatchObject({ kind: 'abort' });
+		await waitFor(
+			() => !processExists(firstPid),
+			'Expected the aborted startup process to stop',
+		);
+		const result = await Promise.race([
+			second,
+			setTimeout(2000, 'timeout'),
+		]);
+		expect(result).toMatchObject({ text: 'ok' });
 	});
 
 	test('removes an aborted queued request before staging', async () => {
@@ -141,33 +136,29 @@ fs.writeFileSync(marker, '')`,
   })
 }`,
 		}), { service: true });
-		try {
-			const controller = new AbortController();
-			const first = wrapper.api.ocr(
-				Buffer.from('first'),
-				{ signal: controller.signal },
-			).catch((error: unknown) => error);
-			await waitFor(
-				() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
-				'Expected the cancellable shim request to start',
-			);
-			const firstPid = wrapper.serviceApi.servicePidForTesting()!;
-			const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
-			controller.abort();
-			const [firstOutcome, secondOutcome] = await Promise.all([
-				Promise.race([first, setTimeout(8000, 'timeout')]),
-				Promise.race([second, setTimeout(8000, 'timeout')]),
-			]);
-			expect(firstOutcome).toMatchObject({ kind: 'abort' });
-			expect(secondOutcome).toMatchObject({ text: 'replacement' });
-			expect(wrapper.serviceApi.servicePidForTesting()).not.toBe(firstPid);
-			await waitFor(
-				() => !processExists(firstPid),
-				'Expected the unresponsive service process to stop',
-			);
-		} finally {
-			wrapper.serviceApi.stopService();
-		}
+		const controller = new AbortController();
+		const first = wrapper.api.ocr(
+			Buffer.from('first'),
+			{ signal: controller.signal },
+		).catch((error: unknown) => error);
+		await waitFor(
+			() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
+			'Expected the cancellable shim request to start',
+		);
+		const firstPid = wrapper.serviceApi.servicePidForTesting()!;
+		const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
+		controller.abort();
+		const [firstOutcome, secondOutcome] = await Promise.all([
+			Promise.race([first, setTimeout(8000, 'timeout')]),
+			Promise.race([second, setTimeout(8000, 'timeout')]),
+		]);
+		expect(firstOutcome).toMatchObject({ kind: 'abort' });
+		expect(secondOutcome).toMatchObject({ text: 'replacement' });
+		expect(wrapper.serviceApi.servicePidForTesting()).not.toBe(firstPid);
+		await waitFor(
+			() => !processExists(firstPid),
+			'Expected the unresponsive service process to stop',
+		);
 	});
 
 	test('sends a cancel frame before advancing the queue', async () => {
@@ -192,28 +183,24 @@ let blockNextOcr = true`,
   })
 }`,
 		}), { service: true });
-		try {
-			const controller = new AbortController();
-			const first = wrapper.api.ocr(
-				Buffer.from('first'),
-				{ signal: controller.signal },
-			).catch((error: unknown) => error);
-			await waitFor(
-				() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
-				'Expected the cancellable shim request to start',
-			);
-			const pid = wrapper.serviceApi.servicePidForTesting();
-			const second = wrapper.api.ocr(Buffer.from('second'));
-			controller.abort();
-			expect(await first).toMatchObject({ kind: 'abort' });
-			const result = await Promise.race([
-				second,
-				setTimeout(2000, 'timeout'),
-			]);
-			expect(result).toMatchObject({ text: 'next' });
-			expect(wrapper.serviceApi.servicePidForTesting()).toBe(pid);
-		} finally {
-			wrapper.serviceApi.stopService();
-		}
+		const controller = new AbortController();
+		const first = wrapper.api.ocr(
+			Buffer.from('first'),
+			{ signal: controller.signal },
+		).catch((error: unknown) => error);
+		await waitFor(
+			() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
+			'Expected the cancellable shim request to start',
+		);
+		const pid = wrapper.serviceApi.servicePidForTesting();
+		const second = wrapper.api.ocr(Buffer.from('second'));
+		controller.abort();
+		expect(await first).toMatchObject({ kind: 'abort' });
+		const result = await Promise.race([
+			second,
+			setTimeout(2000, 'timeout'),
+		]);
+		expect(result).toMatchObject({ text: 'next' });
+		expect(wrapper.serviceApi.servicePidForTesting()).toBe(pid);
 	});
 }, { parallel: false });

@@ -10,6 +10,15 @@ export const fixtureData = (name: string): Buffer => fs.readFileSync(
 	fileURLToPath(new URL(`fixtures/${name}`, import.meta.url)),
 );
 
+export const processExists = (pid: number): boolean => {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
 const sourceDirectory = fileURLToPath(new URL('../src', import.meta.url));
 
 type WrapperApi = typeof WrapperApiModule;
@@ -66,19 +75,11 @@ export const importWrapper = async (
 			].filter((pid): pid is number => pid !== undefined);
 			serviceApi.stopService();
 			try {
-				const isRunning = (pid: number): boolean => {
-					try {
-						process.kill(pid, 0);
-						return true;
-					} catch {
-						return false;
-					}
-				};
 				const deadline = Date.now() + 2000;
-				while (pids.some(isRunning) && Date.now() < deadline) {
+				while (pids.some(processExists) && Date.now() < deadline) {
 					await setTimeout(20);
 				}
-				if (pids.some(isRunning)) {
+				if (pids.some(processExists)) {
 					throw new Error(`Service process did not stop: ${pids.join(', ')}`);
 				}
 			} finally {

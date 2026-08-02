@@ -46,15 +46,6 @@ process.stdin.on('data', chunk => {
 process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 `;
 
-export const processExists = (pid: number): boolean => {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-};
-
 export const waitFor = async (
 	condition: () => boolean | Promise<boolean>,
 	message: string,
