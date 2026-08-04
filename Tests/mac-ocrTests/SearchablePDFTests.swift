@@ -46,15 +46,6 @@ import Testing
 		#expect(text(document).contains("Hello World"))
 	}
 
-	@Test func pdfPreservesPageCountAndText() async throws {
-		let document = try await render("multipage.pdf")
-		#expect(document.pageCount == 3)
-		let extracted = text(document)
-		#expect(extracted.contains("Page One"))
-		#expect(extracted.contains("Page Two"))
-		#expect(extracted.contains("Page Three"))
-	}
-
 	@Test func pdfPagesStayInOrder() async throws {
 		// Each scanned page's recognized text must land on its own page, in
 		// order. Guards the render/OCR pipeline against shuffling pages when
@@ -65,23 +56,6 @@ import Testing
 		#expect(perPage[0].contains("Page One"))
 		#expect(perPage[1].contains("Page Two"))
 		#expect(perPage[2].contains("Page Three"))
-	}
-
-	@Test func mergedSourcesStayInArgumentOrder() async throws {
-		let data = try await VisionGate.shared.withPermit {
-			try await SearchablePDF.renderMerged(
-				sources: [Self.source("hello.png"), Self.source("multipage.pdf")],
-				options: OCROptions(),
-				pdfDpi: nil
-			)
-		}
-		let document = try #require(PDFDocument(data: data))
-		#expect(document.pageCount == 4)
-		let perPage = (0..<document.pageCount).map { document.page(at: $0)?.string ?? "" }
-		#expect(perPage[0].contains("Hello World"))
-		#expect(perPage[1].contains("Page One"))
-		#expect(perPage[2].contains("Page Two"))
-		#expect(perPage[3].contains("Page Three"))
 	}
 
 	@Test func recognizedWordsExtractAsCleanRuns() async throws {

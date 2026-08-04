@@ -14,11 +14,6 @@ Every file in this directory plus its provenance. All fixtures are project-owned
 - **What**: 200×100 blank white PNG.
 - **Why**: Negative OCR fixture — Vision returns no observations for an image with no text.
 
-### `hello-exif-rotated.jpg`
-
-- **What**: JPEG of "Hello World" rotated 180° in the pixel data, with EXIF orientation tag 3.
-- **Why**: Regression fixture for the "bounding boxes are in display-oriented space" invariant — the recognized text's box should land in the same place as `hello.png` when orientation is honored.
-
 ### `document-photo.png`
 
 - **What**: 600×800 PNG that looks like a photo of a printed document on a gray surface, containing a perspective-distorted copy of `hello.png`.

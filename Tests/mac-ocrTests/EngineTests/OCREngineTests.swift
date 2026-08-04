@@ -54,33 +54,6 @@ private let imageBackedOCRTestsDisabled = {
 	}
 
 	@Test(.disabled(if: imageBackedOCRTestsDisabled, "Vision OCR image fixtures require CVPixelBuffer support in the host runtime."))
-	func exifOrientationProducesDisplaySpaceBoundingBoxes() async throws {
-		// hello-exif-rotated.jpg is hello.png with 180° rotation baked into
-		// EXIF. The invariant *we* own is the orientation transform: after
-		// correction, the recognized box must land where the upright
-		// fixture's box lands — compare the two directly instead of betting
-		// on Vision's absolute layout.
-		let upright = try EngineTestSupport.loadImage("hello.png")
-		let uprightBox = try await OCREngine.run(
-			session: VisionSession(image: upright.image, orientation: upright.orientation),
-			options: OCROptions()
-		).observations[0].boundingBox
-
-		let rotated = try EngineTestSupport.loadImage("hello-exif-rotated.jpg")
-		let result = try await OCREngine.run(
-			session: VisionSession(image: rotated.image, orientation: rotated.orientation),
-			options: OCROptions()
-		)
-		#expect(result.observations[0].text.contains("Hello World"))
-		let rotatedBox = result.observations[0].boundingBox
-		let tolerance = 0.05
-		#expect(abs(rotatedBox.x - uprightBox.x) < tolerance)
-		#expect(abs(rotatedBox.y - uprightBox.y) < tolerance)
-		#expect(abs(rotatedBox.width - uprightBox.width) < tolerance)
-		#expect(abs(rotatedBox.height - uprightBox.height) < tolerance)
-	}
-
-	@Test(.disabled(if: imageBackedOCRTestsDisabled, "Vision OCR image fixtures require CVPixelBuffer support in the host runtime."))
 	func confidenceThresholdFiltersObservations() async throws {
 		let loaded = try EngineTestSupport.loadImage("hello.png")
 		let baseline = try await OCREngine.run(

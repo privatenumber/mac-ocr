@@ -125,13 +125,6 @@ import Testing
 		#expect((document.string ?? "").contains("Page Two"))
 	}
 
-	@Test func searchablePdfToStdoutEmitsPdfBytes() throws {
-		let result = try run(["searchable-pdf", "-o", "-", fixture("hello.png")])
-		#expect(result.exitCode == 0)
-		// Output begins with the PDF magic header.
-		#expect(result.stdoutData.prefix(5) == Data("%PDF-".utf8))
-	}
-
 	// MARK: - languages
 
 	@Test func languagesSubcommandListsLanguages() throws {

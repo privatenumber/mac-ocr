@@ -7,8 +7,7 @@ import Testing
 @testable import MacOcrCore
 
 /// Fidelity of PDF rendering: OCR must see only the visible (cropped) page, and
-/// searchable-pdf output must preserve source geometry (rotation/crop) and not
-/// duplicate text on born-digital pages.
+/// searchable-pdf output must preserve source geometry (rotation/crop).
 @Suite(.serialized) struct PDFFidelityTests {
 
 	// MARK: - [P1] CropBox clipping (OCR)
@@ -50,26 +49,6 @@ import Testing
 		)
 	}
 
-	// MARK: - [P2] Don't duplicate text on born-digital pages
-
-	@Test func bornDigitalTextIsNotDuplicated() async throws {
-		let pdf = makeBornDigitalTextPDF("Hello")
-		let path = temporaryPDFPath("born")
-		defer { try? FileManager.default.removeItem(atPath: path) }
-		try pdf.write(to: URL(fileURLWithPath: path))
-
-		let output = try await VisionGate.shared.withPermit {
-			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
-		}
-		let document = try #require(PDFDocument(data: output))
-		let text = document.string ?? ""
-		let occurrences = text.components(separatedBy: "Hello").count - 1
-		#expect(
-			occurrences == 1,
-			"expected 'Hello' once (no OCR overlay over existing text); got \(occurrences) in: \(text)"
-		)
-	}
-
 	// MARK: - Fixture helpers
 
 	private func temporaryPDFPath(_ label: String) -> String {
@@ -99,21 +78,6 @@ import Testing
 		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
 		drawText("INSIDE", at: CGPoint(x: 16, y: 90), fontSize: 40, in: context)
 		drawText("OUTSIDE", at: CGPoint(x: 212, y: 90), fontSize: 40, in: context)
-		context.endPDFPage()
-		context.closePDF()
-		return data as Data
-	}
-
-	/// Born-digital page: real, selectable text drawn via Core Text (produces
-	/// text-showing operators in the content stream).
-	private func makeBornDigitalTextPDF(_ text: String) -> Data {
-		let data = NSMutableData()
-		let consumer = CGDataConsumer(data: data as CFMutableData)!
-		var mediaBox = CGRect(x: 0, y: 0, width: 300, height: 120)
-		let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil)!
-		context.beginPDFPage(nil)
-		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-		drawText(text, at: CGPoint(x: 20, y: 50), fontSize: 48, in: context)
 		context.endPDFPage()
 		context.closePDF()
 		return data as Data

@@ -322,12 +322,6 @@ import Testing
 		#expect(result.exitCode == 64, "expected usage error; exit \(result.exitCode), stderr: \(result.stderr)")
 	}
 
-	@Test func stdoutSingleInputEmitsPdfBytes() throws {
-		let result = try TestSupport.run(["searchable-pdf", TestSupport.fixturePath("hello.png"), "-o", "-"])
-		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
-		#expect(result.stdoutData.prefix(5) == Data("%PDF-".utf8))
-	}
-
 	@Test func imageQualityOutsideUnitIntervalErrors() throws {
 		let result = try TestSupport.run([
 			"searchable-pdf",

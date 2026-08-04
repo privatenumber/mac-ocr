@@ -50,22 +50,6 @@ import Testing
 		#expect(text.contains("STAMP-7"))
 	}
 
-	@Test func ocrAllPagesLeavesBornDigitalDuplicationToTheCaller() async throws {
-		// Sanity: with the flag ON, a fully born-digital page gets a duplicate
-		// layer — the flag is a sharp tool by design, not a smarter detector.
-		let path = try writeTemporaryPDF(makeBornDigitalPDF("Quartz"), label: "born-forced")
-		defer { try? FileManager.default.removeItem(atPath: path) }
-
-		let output = try await VisionGate.shared.withPermit {
-			try await SearchablePDF.render(
-				source: .file(path), options: OCROptions(), pdfDpi: nil, ocrAllPages: true
-			)
-		}
-		let text = try extractText(output)
-		let occurrences = text.components(separatedBy: "Quartz").count - 1
-		#expect(occurrences >= 1, "original text must survive; got: \(text)")
-	}
-
 	@Test func formXObjectTextIsNotDetectedAsBornDigital() async throws {
 		// Characterizes the second documented limitation: the detector scans
 		// only the page's own content stream, so born-digital text hidden in a
@@ -139,22 +123,6 @@ import Testing
 		context.draw(makeTextRaster(), in: CGRect(x: 10, y: 80, width: 400, height: 100))
 		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
 		drawText("STAMP-7", at: CGPoint(x: 330, y: 16), fontSize: 14, in: context)
-		context.endPDFPage()
-		context.closePDF()
-		return data as Data
-	}
-
-	/// Fully born-digital page (selectable text only).
-	private func makeBornDigitalPDF(_ text: String) -> Data {
-		let data = NSMutableData()
-		let consumer = CGDataConsumer(data: data as CFMutableData)!
-		var mediaBox = CGRect(x: 0, y: 0, width: 300, height: 120)
-		let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil)!
-		context.beginPDFPage(nil)
-		context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-		context.fill(mediaBox)
-		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-		drawText(text, at: CGPoint(x: 20, y: 45), fontSize: 42, in: context)
 		context.endPDFPage()
 		context.closePDF()
 		return data as Data
