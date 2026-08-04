@@ -43,7 +43,7 @@ public struct OCRCommand: AsyncParsableCommand {
 		// Line-buffer stdout so streaming output isn't held up by pipe buffering
 		setvbuf(stdout, nil, _IOLBF, 0)
 
-		let sources = common.resolveInputSources()
+		let sources = resolveImageSources(files: common.files)
 		if sources.isEmpty {
 			// Bare `mac-ocr` reaches here via the default subcommand; its help
 			// must be the ROOT help (usage without the `ocr` token, plus the
@@ -56,7 +56,7 @@ public struct OCRCommand: AsyncParsableCommand {
 		}
 
 		let options = try recognition.buildOCROptions(
-			regionOfInterest: try common.resolvedROI(),
+			regionOfInterest: try common.roi.map(parseRegionOfInterest),
 			maxCandidates: maxCandidates
 		)
 		let outputMode = try common.resolvedOutputMode
@@ -87,7 +87,7 @@ public struct OCRCommand: AsyncParsableCommand {
 				outputMode: outputMode,
 				totalSources: totalSources
 			),
-			resolvedPdfDpi: common.resolvedPdfDpi,
+			resolvedPdfDpi: resolvedPdfDpi(common.pdfDpi),
 			pdfPassword: resolvePdfPassword(recognition.password),
 			onProgress: showProgress
 				? { sourceIndex, source, page, pageCount in

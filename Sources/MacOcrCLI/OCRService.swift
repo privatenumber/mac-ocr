@@ -182,13 +182,13 @@ private func serviceResult(
 	defer { try? FileManager.default.removeItem(atPath: inputPath) }
 	let command = try OCRCommand.parse(arguments + [inputPath])
 	let options = try command.recognition.buildOCROptions(
-		regionOfInterest: try command.common.resolvedROI(),
+		regionOfInterest: try command.common.roi.map(parseRegionOfInterest),
 		maxCandidates: command.maxCandidates
 	)
 	try Task.checkCancellation()
 	let loader = try await openSource(
 		.file(inputPath),
-		pdfDpi: command.common.resolvedPdfDpi,
+		pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
 		pdfPassword: request.password
 	)
 	try Task.checkCancellation()

@@ -9,7 +9,7 @@ extension OCRStrategy: ExpressibleByArgument {
 	}
 }
 
-public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
+public struct SearchablePDFCommand: AsyncParsableCommand {
 	public static let configuration = CommandConfiguration(
 		commandName: "searchable-pdf",
 		abstract: "Create a PDF with an invisible, selectable OCR text layer.",
@@ -98,7 +98,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	var roi: String?
 
 	public func validate() throws {
-		try validatePdfDpi()
+		try validatePdfDpi(pdfDpi)
 		try imageQuality?.requireUnitInterval(name: "--image-quality")
 		try imagePageDpi?.requireDPI(name: "--image-page-dpi")
 		try imageDownsampleDpi?.requireDPI(name: "--image-downsample-dpi")
@@ -117,12 +117,12 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	}
 
 	public func run() async throws {
-		let sources = resolveInputSources()
+		let sources = resolveImageSources(files: files)
 		if sources.isEmpty {
 			throw CleanExit.helpRequest(self)
 		}
-		let options = try recognition.buildOCROptions(regionOfInterest: try resolvedROI())
-		let pdfDpi = resolvedPdfDpi
+		let options = try recognition.buildOCROptions(regionOfInterest: try roi.map(parseRegionOfInterest))
+		let pdfDpi = MacOcrCLI.resolvedPdfDpi(pdfDpi)
 		let pdfPassword = resolvePdfPassword(recognition.password)
 
 		if merge {
@@ -337,7 +337,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	}
 
 	private func validateOutputRouting() throws {
-		let multipleInputs = resolveInputSources().count > 1
+		let multipleInputs = resolveImageSources(files: files).count > 1
 		if merge {
 			try validateMergedOutputRouting()
 			return
@@ -375,7 +375,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	}
 
 	private func validateMergedOutputRouting() throws {
-		if resolveInputSources().contains(.stdin) {
+		if resolveImageSources(files: files).contains(.stdin) {
 			throw ValidationError("`--merge` does not support stdin input. Pass file paths in the desired page order.")
 		}
 		guard let output else {
@@ -412,7 +412,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 
 	private func validateNoDebugOutputCollisions(mode: OutputMode) throws {
 		guard debugEnabled else { return }
-		let sources = resolveInputSources()
+		let sources = resolveImageSources(files: files)
 		var pdfPaths: [String] = []
 		pdfPaths.reserveCapacity(sources.count)
 		for source in sources {
@@ -476,7 +476,7 @@ public struct SearchablePDFCommand: AsyncParsableCommand, RunnerOptions {
 	/// running this in `validate()` fails fast (exit 64) before any rendering
 	/// rather than losing data mid-batch.
 	private func validateNoOutputCollisions(mode: OutputMode) throws {
-		let sources = resolveInputSources()
+		let sources = resolveImageSources(files: files)
 		guard sources.count > 1 else { return }
 
 		var seen: [String: ImageSource] = [:]

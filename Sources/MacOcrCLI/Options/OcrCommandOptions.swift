@@ -8,7 +8,7 @@ extension OutputFormat: ExpressibleByArgument {}
 /// `searchable-pdf` declares its own input/output surface because the
 /// semantics differ (one PDF artifact per input, `-o -`, no `--format`);
 /// the flags the two commands genuinely share live in `RecognitionOptions`.
-struct OcrCommandOptions: ParsableArguments, RunnerOptions {
+struct OcrCommandOptions: ParsableArguments {
 	@Argument(help: "Image or PDF paths to process. Use - for stdin.")
 	var files: [String] = []
 
@@ -35,8 +35,6 @@ struct OcrCommandOptions: ParsableArguments, RunnerOptions {
 	@Option(name: .long, help: "Region of interest as x,y,w,h in normalized coordinates (0-1, top-left origin). Example: 0,0,1,0.5 for the top half.")
 	var roi: String? = nil
 
-	// `resolvedROI()` comes from RunnerOptions.
-
 	/// Resolved output mode derived from `-o` / `--output`.
 	var resolvedOutputMode: OutputMode {
 		get throws {
@@ -46,7 +44,7 @@ struct OcrCommandOptions: ParsableArguments, RunnerOptions {
 	}
 
 	func validate() throws {
-		try validatePdfDpi()
+		try validatePdfDpi(pdfDpi)
 		if let roi {
 			_ = try parseRegionOfInterest(roi)
 		}
