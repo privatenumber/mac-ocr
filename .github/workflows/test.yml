@@ -21,9 +21,6 @@ jobs:
           swift --version
           xcrun --sdk macosx --show-sdk-version
 
-      - name: Build
-        run: swift build
-
       - name: Swift tests
         # --no-parallel serializes suites; engine-level unit tests call
         # Vision in-process while integration tests spawn subprocess
