@@ -3,30 +3,19 @@ import Testing
 
 /// Tests for the VisionGate serialization invariant.
 ///
-/// VisionGate is a global binary semaphore used to prevent concurrent Vision/ANE
-/// access across test suites. Its key property is that at most one waiter proceeds
-/// at any given time — two concurrent acquirers must not execute their protected
-/// regions simultaneously.
+/// VisionGate serializes test work that can execute Vision across test suites.
+/// Its key property is that at most one waiter proceeds at any given time: two
+/// concurrent acquirers must not execute their protected regions simultaneously.
 ///
 /// These tests operate on a fresh VisionGate instance (not the shared singleton)
 /// to avoid interfering with the test infrastructure's own gate usage.
 @Suite struct VisionGateTests {
 
-	/// Creates an isolated VisionGate for testing — avoids touching the shared
-	/// instance used by TestSupport.run().
-	private func makeGate() -> VisionGate {
-		// VisionGate.init() is private, so we test via the shared singleton
-		// with careful sequencing, OR we expose a testable factory.
-		// Since init() is private we exercise the shared gate's async API
-		// in an isolated sequence that doesn't conflict with other tests.
-		return VisionGate.shared
-	}
-
 	// MARK: - Async acquire / release round-trip
 
 	@Test func acquireAndReleaseCompletesWithoutDeadlock() async {
 		// Acquire and immediately release — must not hang.
-		let gate = VisionGate.shared
+		let gate = VisionGate()
 		await gate.acquire()
 		gate.release()
 	}
@@ -34,7 +23,7 @@ import Testing
 	@Test func sequentialAcquiresSerialize() async throws {
 		// Two sequential acquire/release pairs must both complete.
 		// If the gate didn't release properly, the second acquire would hang.
-		let gate = VisionGate.shared
+		let gate = VisionGate()
 		await gate.acquire()
 		gate.release()
 
@@ -47,9 +36,8 @@ import Testing
 	/// Spawns N concurrent async tasks that each acquire the gate, record their
 	/// interval, and release. Asserts that no two execution intervals overlap.
 	///
-	/// Implementation note: VisionGate is backed by Swift's actor model / serial
-	/// dispatch queue. The test verifies the observable contract rather than
-	/// internal state.
+	/// The gate uses a serial dispatch queue. The test verifies the observable
+	/// contract rather than its internal state.
 	@Test func concurrentAcquirersDoNotOverlap() async throws {
 		let taskCount = 5
 
@@ -60,7 +48,7 @@ import Testing
 		}
 
 		let collector = IntervalCollector()
-		let gate = VisionGate.shared
+		let gate = VisionGate()
 
 		await withTaskGroup(of: Void.self) { group in
 			for _ in 0..<taskCount {
@@ -98,20 +86,18 @@ import Testing
 		// acquireBlocking() is used by TestSupport.run() in non-async contexts.
 		// Verify it completes (doesn't deadlock) and that a subsequent async
 		// acquire succeeds after release.
-		let sema = DispatchSemaphore(value: 0)
-		var acquiredBlocking = false
+		let semaphore = DispatchSemaphore(value: 0)
+		let gate = VisionGate()
 
 		// Run on a background OS thread to avoid blocking a cooperative thread.
-		DispatchQueue.global().async {
-			VisionGate.shared.acquireBlocking()
-			acquiredBlocking = true
-			VisionGate.shared.release()
-			sema.signal()
+		Thread.detachNewThread {
+			gate.acquireBlocking()
+			gate.release()
+			semaphore.signal()
 		}
 
-		let timedOut = sema.wait(timeout: .now() + 10) == .timedOut
+		let timedOut = semaphore.wait(timeout: .now() + 10) == .timedOut
 		#expect(!timedOut, "acquireBlocking should complete within 10 seconds")
-		#expect(acquiredBlocking)
 	}
 
 	// MARK: - N=200 property / stress test
@@ -142,7 +128,7 @@ import Testing
 		}
 
 		let tracker = ConcurrencyTracker()
-		let gate = VisionGate.shared
+		let gate = VisionGate()
 
 		await withTaskGroup(of: Void.self) { group in
 			for _ in 0..<taskCount {
@@ -175,7 +161,7 @@ import Testing
 		// deterministic by observing `waiterCount` — the second waiter only
 		// starts once the first is registered — rather than racing timed
 		// sleeps against the scheduler.
-		let gate = VisionGate.shared
+		let gate = VisionGate()
 		await gate.acquire()
 
 		func waitForWaiterCount(_ expected: Int) async {
@@ -212,5 +198,19 @@ import Testing
 
 		let recorded = await recorder.order
 		#expect(recorded == [1, 2], "Waiters should be resumed in FIFO order; got \(recorded)")
+	}
+
+	@Test func withPermitReleasesAfterAnError() async {
+		struct ExpectedError: Error {}
+
+		let gate = VisionGate()
+		await #expect(throws: ExpectedError.self) {
+			try await gate.withPermit { () throws -> Void in
+				throw ExpectedError()
+			}
+		}
+
+		let result = await gate.withPermit { 42 }
+		#expect(result == 42)
 	}
 }

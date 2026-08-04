@@ -18,7 +18,9 @@ import Testing
 		let path = try write(input, label: "annotated")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 
-		let output = try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		}
 
 		#expect(output == input, "nothing needed OCR — output must be the input bytes, verbatim")
 		let document = try #require(PDFDocument(data: output))
@@ -33,9 +35,11 @@ import Testing
 		let path = try write(input, label: "annotated-forced")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 
-		let output = try await SearchablePDF.render(
-			source: .file(path), options: OCROptions(), pdfDpi: nil, ocrAllPages: true
-		)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(
+				source: .file(path), options: OCROptions(), pdfDpi: nil, ocrAllPages: true
+			)
+		}
 
 		#expect(output != input)
 		let document = try #require(PDFDocument(data: output))
@@ -49,7 +53,9 @@ import Testing
 		let path = try write(input, label: "mixed")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 
-		let output = try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		}
 
 		#expect(output != input)
 		let document = try #require(PDFDocument(data: output))

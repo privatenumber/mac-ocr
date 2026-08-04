@@ -4,6 +4,9 @@ import Testing
 @testable import MacOcrCore
 
 private let imageBackedOCRTestsDisabled = {
+	VisionGate.shared.acquireBlocking()
+	defer { VisionGate.shared.release() }
+
 	do {
 		let loaded = try EngineTestSupport.loadImage("hello.png")
 		_ = try recognizeText(

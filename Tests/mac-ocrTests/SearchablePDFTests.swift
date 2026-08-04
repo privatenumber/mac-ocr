@@ -20,14 +20,16 @@ import Testing
 		imagePageDpi: Double? = nil,
 		imageDownsampleDpi: Double? = nil
 	) async throws -> PDFDocument {
-		let data = try await SearchablePDF.render(
-			source: Self.source(name),
-			options: OCROptions(),
-			pdfDpi: pdfDpi,
-			imageQuality: imageQuality,
-			imagePageDpi: imagePageDpi,
-			imageDownsampleDpi: imageDownsampleDpi
-		)
+		let data = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(
+				source: Self.source(name),
+				options: OCROptions(),
+				pdfDpi: pdfDpi,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi
+			)
+		}
 		guard let document = PDFDocument(data: data) else {
 			throw MessageError("output was not a valid PDF")
 		}
@@ -66,11 +68,13 @@ import Testing
 	}
 
 	@Test func mergedSourcesStayInArgumentOrder() async throws {
-		let data = try await SearchablePDF.renderMerged(
-			sources: [Self.source("hello.png"), Self.source("multipage.pdf")],
-			options: OCROptions(),
-			pdfDpi: nil
-		)
+		let data = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.renderMerged(
+				sources: [Self.source("hello.png"), Self.source("multipage.pdf")],
+				options: OCROptions(),
+				pdfDpi: nil
+			)
+		}
 		let document = try #require(PDFDocument(data: data))
 		#expect(document.pageCount == 4)
 		let perPage = (0..<document.pageCount).map { document.page(at: $0)?.string ?? "" }
@@ -132,11 +136,13 @@ import Testing
 		let path = directory + "/hello-400dpi.jpg"
 		try writeDPIImage(InputMatrixSupport.makeHelloRaster(), to: path, dpi: 400)
 
-		let document = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil
-		)
+		let document = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil
+			)
+		}
 		let page = try #require(PDFDocument(data: document)?.page(at: 0))
 		let bounds = page.bounds(for: .mediaBox)
 		#expect(abs(bounds.width - 72) < 0.1)
@@ -148,12 +154,14 @@ import Testing
 		let path = directory + "/hello-400dpi.jpg"
 		try writeDPIImage(InputMatrixSupport.makeHelloRaster(), to: path, dpi: 400)
 
-		let data = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil,
-			imagePageDpi: 200
-		)
+		let data = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil,
+				imagePageDpi: 200
+			)
+		}
 		let page = try #require(PDFDocument(data: data)?.page(at: 0))
 		let bounds = page.bounds(for: .mediaBox)
 		#expect(abs(bounds.width - 144) < 0.1)
@@ -176,18 +184,21 @@ import Testing
 		let image = makeNoisyImage(width: 800, height: 600)
 		try InputMatrixSupport.write(image, to: path, type: .jpeg)
 
-		let highQuality = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil,
-			imageQuality: 0.9
-		)
-		let lowQuality = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil,
-			imageQuality: 0.25
-		)
+		let (highQuality, lowQuality) = try await VisionGate.shared.withPermit {
+			let highQuality = try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil,
+				imageQuality: 0.9
+			)
+			let lowQuality = try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil,
+				imageQuality: 0.25
+			)
+			return (highQuality, lowQuality)
+		}
 
 		let rawRGBBytes = image.width * image.height * 3
 		#expect(
@@ -206,19 +217,22 @@ import Testing
 		let path = directory + "/noisy-400dpi.jpg"
 		try writeDPIImage(makeNoisyImage(width: 800, height: 600), to: path, dpiWidth: 400, dpiHeight: 400)
 
-		let full = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil,
-			imageQuality: 0.85
-		)
-		let downsampled = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil,
-			imageQuality: 0.85,
-			imageDownsampleDpi: 200
-		)
+		let (full, downsampled) = try await VisionGate.shared.withPermit {
+			let full = try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil,
+				imageQuality: 0.85
+			)
+			let downsampled = try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil,
+				imageQuality: 0.85,
+				imageDownsampleDpi: 200
+			)
+			return (full, downsampled)
+		}
 
 		#expect(downsampled.count < full.count)
 		let fullBounds = try #require(PDFDocument(data: full)?.page(at: 0)).bounds(for: .mediaBox)
@@ -233,19 +247,22 @@ import Testing
 		let path = directory + "/noisy-72x600dpi.jpg"
 		try writeDPIImage(makeNoisyImage(width: 600, height: 800), to: path, dpiWidth: 72, dpiHeight: 600)
 
-		let full = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil,
-			imageQuality: 0.85
-		)
-		let downsampled = try await SearchablePDF.render(
-			source: .file(path),
-			options: OCROptions(),
-			pdfDpi: nil,
-			imageQuality: 0.85,
-			imageDownsampleDpi: 150
-		)
+		let (full, downsampled) = try await VisionGate.shared.withPermit {
+			let full = try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil,
+				imageQuality: 0.85
+			)
+			let downsampled = try await SearchablePDF.render(
+				source: .file(path),
+				options: OCROptions(),
+				pdfDpi: nil,
+				imageQuality: 0.85,
+				imageDownsampleDpi: 150
+			)
+			return (full, downsampled)
+		}
 
 		#expect(
 			downsampled.count < full.count,

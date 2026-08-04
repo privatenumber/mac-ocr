@@ -20,7 +20,9 @@ import Testing
 		let path = try writeTemporaryPDF(makeHybridPagePDF(), label: "hybrid-default")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 
-		let output = try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		}
 		let text = try extractText(output)
 		#expect(text.contains("STAMP-7"), "the digital stamp must survive: \(text)")
 		#expect(
@@ -33,9 +35,11 @@ import Testing
 		let path = try writeTemporaryPDF(makeHybridPagePDF(), label: "hybrid-forced")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 
-		let output = try await SearchablePDF.render(
-			source: .file(path), options: OCROptions(), pdfDpi: nil, ocrAllPages: true
-		)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(
+				source: .file(path), options: OCROptions(), pdfDpi: nil, ocrAllPages: true
+			)
+		}
 		let text = try extractText(output)
 		#expect(
 			text.contains("Hello World"),
@@ -52,9 +56,11 @@ import Testing
 		let path = try writeTemporaryPDF(makeBornDigitalPDF("Quartz"), label: "born-forced")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 
-		let output = try await SearchablePDF.render(
-			source: .file(path), options: OCROptions(), pdfDpi: nil, ocrAllPages: true
-		)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(
+				source: .file(path), options: OCROptions(), pdfDpi: nil, ocrAllPages: true
+			)
+		}
 		let text = try extractText(output)
 		let occurrences = text.components(separatedBy: "Quartz").count - 1
 		#expect(occurrences >= 1, "original text must survive; got: \(text)")
@@ -68,7 +74,9 @@ import Testing
 		let path = try writeTemporaryPDF(makeFormXObjectTextPDF(), label: "form-xobject")
 		defer { try? FileManager.default.removeItem(atPath: path) }
 
-		let output = try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		}
 		let text = try extractText(output)
 		let occurrences = text.components(separatedBy: "Hello World").count - 1
 		#expect(

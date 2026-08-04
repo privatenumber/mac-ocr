@@ -1,29 +1,33 @@
 import Foundation
 
-/// Global binary semaphore that serialises all Vision / ANE access across test
-/// suites and across the subprocess / in-process boundary.
+/// Global binary semaphore that serializes test work which can execute Vision
+/// across test suites and across the subprocess / in-process boundary.
 ///
-/// Swift Testing runs different top-level @Suite types concurrently. Vision pins
-/// the Apple Neural Engine (ANE), a shared resource that deadlocks under
-/// concurrent load. Additionally, spawning many concurrent mac-ocr subprocesses
-/// exhausts the global DispatchQueue thread pool (two pipe-reading tasks per
-/// process) causing group.wait() to stall even after the subprocesses exit.
+/// Swift Testing runs different top-level @Suite types concurrently. Vision's
+/// in-process runtime serializes its own calls, but subprocesses do not share
+/// that runtime. High concurrent Vision load can exhaust GCD's worker pool and
+/// stall rather than report an error.
 ///
 /// All test code that touches Vision must flow through this gate:
 ///   - Subprocess invocations go through TestSupport.run().
-///   - Direct engine calls go through engine test suite init/deinit.
+///   - Direct calls use withPermit(_:) or a suite lifecycle guard.
 ///
 /// Using a continuation queue rather than NSLock makes the gate safe to
 /// acquire from async test functions without blocking cooperative threads.
 final class VisionGate: @unchecked Sendable {
+	private enum Waiter {
+		case continuation(CheckedContinuation<Void, Never>)
+		case semaphore(DispatchSemaphore)
+	}
+
 	static let shared = VisionGate()
 
 	/// Serial queue used as a lightweight mutex for state mutations.
 	private let queue = DispatchQueue(label: "com.privatenumber.mac-ocr.tests.VisionGate")
 	private var available = true
-	private var waiters: [CheckedContinuation<Void, Never>] = []
+	private var waiters: [Waiter] = []
 
-	private init() {}
+	init() {}
 
 	/// Async acquire — suspends the caller until the gate is free. Safe to call
 	/// from async test functions; does not block any cooperative thread.
@@ -34,10 +38,17 @@ final class VisionGate: @unchecked Sendable {
 					self.available = false
 					continuation.resume()
 				} else {
-					self.waiters.append(continuation)
+					self.waiters.append(.continuation(continuation))
 				}
 			}
 		}
+	}
+
+	@discardableResult
+	func withPermit<Result>(_ operation: () async throws -> Result) async rethrows -> Result {
+		await acquire()
+		defer { release() }
+		return try await operation()
 	}
 
 	/// Test-only introspection: how many acquirers are currently queued.
@@ -53,20 +64,32 @@ final class VisionGate: @unchecked Sendable {
 			if self.waiters.isEmpty {
 				self.available = true
 			} else {
-				self.waiters.removeFirst().resume()
+				switch self.waiters.removeFirst() {
+				case .continuation(let continuation):
+					continuation.resume()
+				case .semaphore(let semaphore):
+					semaphore.signal()
+				}
 			}
 		}
 	}
 
-	/// Blocking acquire for synchronous (non-async) test contexts. Spawns a
-	/// detached task to perform the async acquire, then waits on a semaphore.
-	/// Only call this from OS threads — never from async / cooperative contexts.
+	/// Blocking acquire for synchronous (non-async) test contexts. Only call this
+	/// from OS threads — never from async / cooperative contexts.
 	func acquireBlocking() {
-		let sema = DispatchSemaphore(value: 0)
-		Task.detached { [self] in
-			await self.acquire()
-			sema.signal()
+		let semaphore = DispatchSemaphore(value: 0)
+		let isQueued = queue.sync {
+			if available {
+				available = false
+				return false
+			}
+
+			waiters.append(.semaphore(semaphore))
+			return true
 		}
-		sema.wait()
+
+		if isQueued {
+			semaphore.wait()
+		}
 	}
 }

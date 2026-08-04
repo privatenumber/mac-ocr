@@ -39,7 +39,9 @@ import Testing
 		defer { try? FileManager.default.removeItem(atPath: path) }
 		try pdf.write(to: URL(fileURLWithPath: path))
 
-		let output = try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		}
 		let document = try #require(PDFDocument(data: output))
 		let bounds = try #require(document.page(at: 0)).bounds(for: .mediaBox)
 		#expect(
@@ -56,7 +58,9 @@ import Testing
 		defer { try? FileManager.default.removeItem(atPath: path) }
 		try pdf.write(to: URL(fileURLWithPath: path))
 
-		let output = try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		let output = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		}
 		let document = try #require(PDFDocument(data: output))
 		let text = document.string ?? ""
 		let occurrences = text.components(separatedBy: "Hello").count - 1
