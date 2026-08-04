@@ -92,8 +92,6 @@ public struct OutputTemplate: Sendable {
 		let page: Int
 		/// Total page count.
 		let pageCount: Int
-		/// Output file extension including leading dot (e.g. `".png"`, `".txt"`).
-		let outputExtension: String
 	}
 
 	/// Render the template with the given context.
@@ -179,19 +177,8 @@ public struct OutputTemplate: Sendable {
 		return dir
 	}
 
-	/// Returns true if the template contains a `[page]` or `[pagecount]` placeholder.
-	public var referencesPage: Bool {
-		segments.contains { segment in
-			if case .placeholder(let p) = segment {
-				return p == .page || p == .pagecount
-			}
-			return false
-		}
-	}
-
 	/// Returns true if the template contains a `[page]` placeholder (1-indexed
-	/// page number). Does **not** return true for `[pagecount]` alone — use
-	/// `referencesPage` when both should match.
+	/// page number). Does **not** return true for `[pagecount]` alone.
 	///
 	/// This is the signal used by analysis commands to switch from consolidated
 	/// (one file per source) to per-page (one file per page) output: a `[page]`

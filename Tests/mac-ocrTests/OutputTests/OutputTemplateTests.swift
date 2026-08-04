@@ -85,8 +85,7 @@ struct OutputTemplateTests {
 			context: makeContext(
 				sourcePath: "/scans/receipt.jpg",
 				page: 2,
-				pageCount: 10,
-				outputExtension: ".png"
+				pageCount: 10
 			))
 		#expect(result == "/scans/receipt-p2of10.jpg")
 	}
@@ -151,23 +150,6 @@ struct OutputTemplateTests {
 		#expect(throws: (any Error).self) {
 			try template.render(context: context)
 		}
-	}
-
-	// MARK: - referencesPage
-
-	@Test func referencesPageTrueWhenPagePresent() throws {
-		let template = try OutputTemplate(template: "[name]-[page].[ext]")
-		#expect(template.referencesPage)
-	}
-
-	@Test func referencesPageTrueWhenPagecountPresent() throws {
-		let template = try OutputTemplate(template: "[pagecount]-pages")
-		#expect(template.referencesPage)
-	}
-
-	@Test func referencesPageFalseWhenNoPagePlaceholder() throws {
-		let template = try OutputTemplate(template: "[name].[ext]")
-		#expect(!template.referencesPage)
 	}
 
 	// MARK: - referencesPageNumber (drives per-page vs consolidated file output)
@@ -415,13 +397,11 @@ struct ParseOutputValueTests {
 private func makeContext(
 	sourcePath: String?,
 	page: Int = 1,
-	pageCount: Int = 1,
-	outputExtension: String = ".txt"
+	pageCount: Int = 1
 ) -> OutputTemplate.Context {
 	OutputTemplate.Context(
 		sourcePath: sourcePath,
 		page: page,
-		pageCount: pageCount,
-		outputExtension: outputExtension
+		pageCount: pageCount
 	)
 }

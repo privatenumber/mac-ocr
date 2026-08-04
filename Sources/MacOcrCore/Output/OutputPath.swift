@@ -105,8 +105,7 @@ public func resolveOutputPath(
 		let context = OutputTemplate.Context(
 			sourcePath: sourcePath,
 			page: page,
-			pageCount: pageCount,
-			outputExtension: outputExtension
+			pageCount: pageCount
 		)
 		return try template.render(context: context)
 
