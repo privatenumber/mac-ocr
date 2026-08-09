@@ -1,10 +1,11 @@
 # CLI reference
 
-`mac-ocr` has one default action (OCR) and two subcommands (`searchable-pdf` and `languages`).
+`mac-ocr` has one default action (OCR) and three subcommands (`document`, `searchable-pdf`, and `languages`).
 
 ```
 mac-ocr <inputs...> [ocr options]          # recognize text (default)
 mac-ocr ocr <inputs...> [ocr options]      # explicit form (optional)
+mac-ocr document <inputs...> [options]     # structured documents (macOS 26+)
 mac-ocr searchable-pdf <inputs...> [-o <dest>] [ocr options]
 ```
 
@@ -156,6 +157,71 @@ const py = obs.boundingBox.y * result.height
 const pw = obs.boundingBox.width * result.width
 const ph = obs.boundingBox.height * result.height
 ```
+
+## document
+
+`document` is a macOS 26+ structured-document recognizer. It returns a convenience transcript plus the document's paragraphs, tables, lists, line candidates, and normalized geometry. It does not change ordinary OCR or searchable-PDF behavior.
+
+```sh
+mac-ocr document receipt.jpg
+mac-ocr document form.png --format json
+mac-ocr document book.pdf --format jsonl
+mac-ocr document invoice.png -l en --max-candidates 3
+```
+
+### Options
+
+`document` accepts the input, output, PDF, and ROI options from [OCR](#ocr-default-action): `--format`, `--output`, `--pdf-dpi`, `--roi`, and `--password`. Its recognition options are:
+
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `-l, --language <code>` | auto | Document-recognition language identifier, repeatable. Use the runtime's two-letter ISO identifiers such as `en`; ordinary OCR's regional BCP-47 values such as `en-US` are not accepted. |
+| `-w, --custom-words <word>` | - | Custom vocabulary word, repeatable. Custom words have no effect with `--no-language-correction`. |
+| `--custom-words-file <path>` | - | Custom vocabulary file, one word per line. |
+| `--no-language-correction` | off | Return raw recognition results without language correction. |
+| `--min-text-height <0-1>` | Vision default (`1/32`) | Ignore text shorter than this fraction of image height. Higher values reduce memory and work while omitting smaller text. |
+| `--max-candidates <1-10>` | `1` | Alternative candidates retained for each recognized line. |
+
+`document` deliberately does not accept `--fast` or `--confidence`. The document recognizer has no fast/accurate mode, and filtering individual lines would make the aggregate transcript and structural containers internally inconsistent.
+
+### Output schema
+
+Text output prints the root document transcript. JSON and JSONL include the existing `source`, `page`, `pageCount`, `width`, and `height` envelope plus:
+
+```jsonc
+{
+  "schema": "mac-ocr.document",
+  "schemaVersion": 1,
+  "requestRevision": 1,
+  "text": "Convenient root transcript",
+  "documents": [{
+    "confidence": 0,
+    "content": {
+      "boundingRegion": {
+        "points": [{ "x": 0, "y": 0 }],
+        "boundingBox": { "x": 0, "y": 0, "width": 1, "height": 1 }
+      },
+      "text": {
+        "transcript": "Convenient root transcript",
+        "lines": [{
+          "transcript": "A recognized line",
+          "confidence": 0.8,
+          "boundingRegion": { "points": [], "boundingBox": { "x": 0, "y": 0, "width": 1, "height": 1 } },
+          "recognitionLanguages": ["en"],
+          "isTitle": false
+        }]
+      },
+      "paragraphs": [],
+      "tables": [{ "boundingRegion": { "points": [], "boundingBox": { "x": 0, "y": 0, "width": 1, "height": 1 } }, "rows": [] }],
+      "lists": []
+    }
+  }]
+}
+```
+
+Table cells contain `rowRange` and `columnRange` as inclusive zero-based ranges and recursively contain the same document container shape. Lists recursively contain items and marker metadata. All points and boxes use normalized top-left-origin coordinates. Structural collections are separate views of the recognized document; use root `text` for the convenience transcript rather than concatenating paragraphs, tables, and lists.
+
+On macOS before 26, the command exits with a typed unavailable error (`code: "document_recognition_unavailable"`, `requires: "macOS 26+"`).
 
 ## searchable-pdf
 

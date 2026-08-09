@@ -35,13 +35,15 @@ public struct MacOcr: AsyncParsableCommand {
 			# Recognize specific languages (repeatable, BCP-47)
 			mac-ocr menu.jpg -l ja-JP -l en-US
 
-			Other actions: `searchable-pdf` adds a selectable text layer to a PDF or \
-			image; `languages` lists supported recognition languages. Run \
+			Other actions: `document` extracts structured content on macOS 26+; \
+			`searchable-pdf` adds a selectable text layer to a PDF or image; \
+			`languages` lists supported ordinary-OCR recognition languages. Run \
 			`mac-ocr <subcommand> --help` for details.
 			""",
 		version: macOcrVersion,
 		subcommands: [
 			OCRCommand.self,
+			DocumentCommand.self,
 			SearchablePDFCommand.self,
 			LanguagesCommand.self,
 		],

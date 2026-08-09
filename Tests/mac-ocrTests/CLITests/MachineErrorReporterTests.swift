@@ -7,9 +7,7 @@ import Testing
 
 @Suite("MachineErrorReporter", .serialized)
 struct MachineErrorReporterTests {
-	/// Pins the full envelope shape, including the `requires` field — the
-	/// `unavailable` kind is part of the fd-3 schema contract even though the
-	/// OCR-only binary never emits it today.
+	/// Pins the unavailable envelope emitted by the macOS 26 document command.
 	@Test func reportWritesFullEnvelopeToFd3() throws {
 		let previousFormat = getenv("MAC_OCR_ERROR_FORMAT").map { String(cString: $0) }
 		defer {
@@ -49,14 +47,7 @@ struct MachineErrorReporterTests {
 		}
 		close(writeFD)
 
-		MachineErrorReporter.report(
-			kind: .unavailable,
-			code: "vision_unavailable",
-			message: "'lens-smudge' is not available on this OS (requires macOS 26+)",
-			exitCode: 1,
-			command: "lens-smudge",
-			requires: "macOS 26+"
-		)
+		MachineErrorReporter.reportThrownError(DocumentUnavailableError(), command: "document")
 		close(3)
 
 		var data = Data()
@@ -74,10 +65,10 @@ struct MachineErrorReporterTests {
 		#expect(envelope["schema"] as? String == "mac-ocr.error")
 		#expect(envelope["schemaVersion"] as? Int == 1)
 		#expect(envelope["kind"] as? String == "unavailable")
-		#expect(envelope["code"] as? String == "vision_unavailable")
-		#expect(envelope["message"] as? String == "'lens-smudge' is not available on this OS (requires macOS 26+)")
+		#expect(envelope["code"] as? String == "document_recognition_unavailable")
+		#expect(envelope["message"] as? String == "Document recognition requires macOS 26 or later")
 		#expect(envelope["exitCode"] as? Int == 1)
-		#expect(envelope["command"] as? String == "lens-smudge")
+		#expect(envelope["command"] as? String == "document")
 		#expect(envelope["requires"] as? String == "macOS 26+")
 	}
 }

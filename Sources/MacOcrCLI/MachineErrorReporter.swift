@@ -32,6 +32,17 @@ enum MachineErrorReporter {
 	/// usage error carries the actual validation text rather than an opaque
 	/// `CommandError` description.
 	static func reportThrownError(_ error: Error, command: String) {
+		if error is DocumentUnavailableError {
+			report(
+				kind: .unavailable,
+				code: "document_recognition_unavailable",
+				message: "Document recognition requires macOS 26 or later",
+				exitCode: 1,
+				command: command,
+				requires: "macOS 26+"
+			)
+			return
+		}
 		let exitCode = MacOcr.exitCode(for: error)
 		guard exitCode != ExitCode.success else {
 			return

@@ -26,6 +26,156 @@ const jsonlLine = (page: number, pageCount: number, content: string): string => 
 	observations: [],
 });
 
+const documentJsonlLine = JSON.stringify({
+	schema: 'mac-ocr.document',
+	schemaVersion: 1,
+	requestRevision: 1,
+	page: 1,
+	pageCount: 1,
+	width: 100,
+	height: 100,
+	text: 'Root text',
+	documents: [{
+		confidence: 0.9,
+		content: {
+			boundingRegion: {
+				points: [],
+				boundingBox: {
+					x: 0,
+					y: 0,
+					width: 1,
+					height: 1,
+				},
+			},
+			text: {
+				transcript: 'Root text',
+				boundingRegion: {
+					points: [],
+					boundingBox: {
+						x: 0,
+						y: 0,
+						width: 1,
+						height: 1,
+					},
+				},
+				lines: [{
+					transcript: 'Root text',
+					confidence: 0.9,
+					boundingRegion: {
+						points: [],
+						boundingBox: {
+							x: 0,
+							y: 0,
+							width: 1,
+							height: 1,
+						},
+					},
+					candidates: [{
+						text: 'Root test',
+						confidence: 0.3,
+					}],
+					recognitionLanguages: ['en'],
+					isTitle: true,
+					textDirection: 'leftToRight',
+					shouldWrapToNextLine: false,
+				}],
+			},
+			paragraphs: [],
+			tables: [{
+				boundingRegion: {
+					points: [],
+					boundingBox: {
+						x: 0,
+						y: 0,
+						width: 1,
+						height: 1,
+					},
+				},
+				rows: [[{
+					rowRange: {
+						start: 0,
+						end: 0,
+					},
+					columnRange: {
+						start: 0,
+						end: 0,
+					},
+					content: {
+						boundingRegion: {
+							points: [],
+							boundingBox: {
+								x: 0,
+								y: 0,
+								width: 1,
+								height: 1,
+							},
+						},
+						text: {
+							transcript: 'CELL',
+							boundingRegion: {
+								points: [],
+								boundingBox: {
+									x: 0,
+									y: 0,
+									width: 1,
+									height: 1,
+								},
+							},
+							lines: [],
+						},
+						paragraphs: [],
+						tables: [],
+						lists: [],
+					},
+				}]],
+			}],
+			lists: [{
+				boundingRegion: {
+					points: [],
+					boundingBox: {
+						x: 0,
+						y: 0,
+						width: 1,
+						height: 1,
+					},
+				},
+				items: [{
+					markerType: 'bullet',
+					markerText: '-',
+					text: 'ITEM',
+					content: {
+						boundingRegion: {
+							points: [],
+							boundingBox: {
+								x: 0,
+								y: 0,
+								width: 1,
+								height: 1,
+							},
+						},
+						text: {
+							transcript: 'ITEM',
+							boundingRegion: {
+								points: [],
+								boundingBox: {
+									x: 0,
+									y: 0,
+									width: 1,
+									height: 1,
+								},
+							},
+							lines: [],
+						},
+						paragraphs: [],
+						tables: [],
+						lists: [],
+					},
+				}],
+			}],
+		},
+	}],
+});
+
 /**
  * A Node shim that emits one page announcing more, then stalls — the wrapper
  * must kill it. Node (not `sh`) so the process holds its unique script path
@@ -102,6 +252,32 @@ describe('wrapper (shim binary)', () => {
 		expect(Buffer.from(pdf).toString()).toContain('--ocr-strategy standard');
 	});
 
+	test('ocrDocument forwards document options and parses its schema', async () => {
+		await using wrapper = await importWrapper(shShim(String.raw`printf '{"schema":"mac-ocr.document","schemaVersion":1,"requestRevision":1,"page":1,"pageCount":1,"width":1,"height":1,"text":"%s","documents":[]}\n' "$*"`));
+		const result = await wrapper.api.ocrDocument(Buffer.from('x'), {
+			languages: ['en'],
+			maxCandidates: 2,
+		});
+		expect(result.text).toBe('document --format jsonl --language en --max-candidates 2 -');
+		expect(result.schemaVersion).toBe(1);
+	});
+
+	test('ocrDocument parses nested table and list content', async () => {
+		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '${documentJsonlLine}'`));
+		const result = await wrapper.api.ocrDocument(Buffer.from('x'));
+		const content = result.documents[0]?.content;
+		expect(content?.text.lines[0]?.candidates?.[0]?.text).toBe('Root test');
+		expect(content?.tables[0]?.rows[0]?.[0]?.content.text.transcript).toBe('CELL');
+		expect(content?.lists[0]?.items[0]?.markerType).toBe('bullet');
+	});
+
+	test('ocrDocument rejects an incompatible result schema', async () => {
+		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '{"page":1,"pageCount":1}'`));
+		const error = await wrapper.api.ocrDocument(Buffer.from('x')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect((error as MacOcrError).kind).toBe('parse');
+	});
+
 	test('ocr() fails multi-page input from the first page, without waiting', async () => {
 		// Page 1 announces pageCount 3; the shim then stalls. The wrapper must
 		// reject from pageCount alone instead of waiting for page 2. (`exec`
@@ -138,6 +314,24 @@ describe('wrapper (shim binary)', () => {
 		expect((error as MacOcrError).kind).toBe('parse');
 		expect((error as MacOcrError).message).toMatch(/2 of 3 pages/);
 		expect(seen).toEqual([1, 2]);
+	});
+
+	test('ocr.pages() rejects duplicate page records', async () => {
+		await using wrapper = await importWrapper(shShim([
+			String.raw`printf '%s\n' '${jsonlLine(1, 3, 'one')}'`,
+			String.raw`printf '%s\n' '${jsonlLine(1, 3, 'duplicate')}'`,
+			String.raw`printf '%s\n' '${jsonlLine(3, 3, 'three')}'`,
+		].join('\n')));
+		let error: unknown;
+		try {
+			// eslint-disable-next-line no-empty -- draining is the duplicate-page scenario
+			for await (const _page of wrapper.api.ocr.pages(Buffer.from('x'))) {}
+		} catch (error_) {
+			error = error_;
+		}
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect((error as MacOcrError).kind).toBe('parse');
+		expect((error as MacOcrError).message).toContain('out of order');
 	});
 
 	test('ocr.pages() errors on a clean exit with no output', async () => {

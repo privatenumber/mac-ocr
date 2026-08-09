@@ -17,6 +17,7 @@
 - **Read text from an image:** `mac-ocr photo.png`
 - **Read text from many images:** `mac-ocr *.png`
 - **Stream text from a PDF, page by page:** `mac-ocr scan.pdf --format jsonl`
+- **Read document structure on macOS 26+:** `mac-ocr document receipt.jpg --format json`
 - **Turn an image into a searchable PDF:** `mac-ocr searchable-pdf photo.png` → `photo.ocr.pdf`
 - **Add a selectable text layer to a scanned PDF:** `mac-ocr searchable-pdf scan.pdf` → `scan.ocr.pdf`
 
@@ -54,6 +55,18 @@ mac-ocr document.pdf --format jsonl   # one JSON object per page, streamed
 ```
 
 PDF pages stream as they're recognized, so with a large document you see the first page's text right away.
+
+## Read structured documents
+
+`document` uses macOS 26's structured document recognizer. It returns a convenient transcript plus paragraphs, tables, lists, line geometry, and table-cell ranges as JSON:
+
+```sh
+mac-ocr document receipt.jpg --format json
+mac-ocr document book.pdf --format jsonl   # one structured result per page
+mac-ocr document form.png -l en            # document language identifiers are two-letter ISO codes
+```
+
+This command requires macOS 26+. It deliberately does not accept `--fast` or `--confidence`: the document recognizer has no fast/accurate switch, and filtering individual lines would make its aggregate text and structural containers inconsistent. See [docs/CLI.md](docs/CLI.md#document) for the full schema and supported options.
 
 ### Save text to files
 
@@ -153,7 +166,12 @@ npm install mac-ocr
 
 ```ts
 import fs from 'node:fs/promises'
-import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
+import {
+    ocr,
+    ocrDocument,
+    createSearchablePdf,
+    supportedLanguages
+} from 'mac-ocr'
 
 // Recognize text in an image or single-page PDF
 const result = await ocr(await fs.readFile('receipt.jpg'))
@@ -167,6 +185,13 @@ for await (const page of ocr.pages(await fs.readFile('book.pdf'))) {
 // …or collect the whole thing into an array
 const pages = await Array.fromAsync(ocr.pages(await fs.readFile('book.pdf')))
 
+// Read macOS 26 structured document content from an image or single-page PDF
+const document = await ocrDocument(await fs.readFile('receipt.jpg'))
+console.log(document.documents[0]?.content.tables)
+for await (const page of ocrDocument.pages(await fs.readFile('book.pdf'))) {
+    console.log(page.page, page.text)
+}
+
 // Build a searchable PDF (returns the PDF bytes)
 const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'), { fast: true })
 await fs.writeFile('scan.ocr.pdf', pdf)
@@ -175,11 +200,11 @@ await fs.writeFile('scan.ocr.pdf', pdf)
 const languages = await supportedLanguages()
 ```
 
-Options mirror the CLI flags (like `{ fast: true }` above), plus an `AbortSignal` for cancellation. Failures throw a `MacOcrError` with a `kind` you can branch on. See [docs/NODE.md](docs/NODE.md) for every option, the result types, and error handling.
+Options mirror the CLI flags (like `{ fast: true }` above), plus an `AbortSignal` for cancellation. `ocrDocument` is macOS 26-only and has its own structured-document option/result types. Failures throw a `MacOcrError` with a `kind` you can branch on. See [docs/NODE.md](docs/NODE.md) for every option, the result types, and error handling.
 
 ## How it works
 
-`mac-ocr` is a native Swift binary built on Apple's Vision framework (`VNRecognizeTextRequest`). Recognition happens entirely on-device — nothing is uploaded. The searchable-PDF layer is invisible text drawn with Core Graphics + Core Text, placed word by word where Vision found each word.
+`mac-ocr` is a native Swift binary built on Apple's Vision framework (`VNRecognizeTextRequest` and, on macOS 26+, `RecognizeDocumentsRequest`). Recognition happens entirely on-device — nothing is uploaded. The searchable-PDF layer is invisible text drawn with Core Graphics + Core Text, placed word by word where Vision found each word.
 
 ## Agent Skills
 

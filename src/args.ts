@@ -53,7 +53,19 @@ export const serializeRegionOfInterest = (roi: RegionOfInterest): string => {
  * One-shot calls use `MAC_OCR_PDF_PASSWORD`; shared-service calls send the
  * password inside their framed stdin request.
  */
-export const buildArgs = (options?: OcrOptions): string[] => {
+export const buildArgs = (options?: Pick<
+	OcrOptions,
+	| 'fast'
+	| 'languages'
+	| 'confidence'
+	| 'customWords'
+	| 'languageCorrection'
+	| 'minTextHeight'
+	| 'maxCandidates'
+	| 'regionOfInterest'
+	| 'pdfDpi'
+	| 'password'
+>): string[] => {
 	const args: string[] = [];
 	if (options?.fast) {
 		args.push('--fast');
