@@ -28,12 +28,12 @@ public struct DocumentCommand: AsyncParsableCommand {
 
 	public func run() async throws {
 		setvbuf(stdout, nil, _IOLBF, 0)
-		try DocumentEngine.checkAvailability()
 
 		let sources = resolveImageSources(files: common.files)
 		if sources.isEmpty {
 			throw CleanExit.helpRequest(self)
 		}
+		try DocumentEngine.checkAvailability()
 
 		let options: DocumentOptions
 		do {

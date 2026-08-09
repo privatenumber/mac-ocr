@@ -29,6 +29,12 @@ import Testing
 		#expect(!result.stdout.contains("--service"), "internal service switch leaked into help: \(result.stdout)")
 	}
 
+	@Test func explicitDocumentInvocationShowsDocumentHelp() throws {
+		let result = try runWithTerminalStdin(["document"])
+		#expect(result.exitCode == 0)
+		#expect(result.stdout.contains("USAGE: mac-ocr document"), "got: \(result.stdout)")
+	}
+
 	// MARK: - Helper
 
 	/// Run the binary with stdin attached to a pseudo-terminal so the
