@@ -7,7 +7,7 @@ import {
 	waitForExit,
 	type Spawned,
 } from './process.ts';
-import { ocrWithService } from './service/index.ts';
+import { ocrPagesWithService, ocrWithService } from './service/index.ts';
 import type { Input, OcrOptions, OcrResult } from './types.ts';
 
 const label = 'mac-ocr ocr';
@@ -102,7 +102,7 @@ const ocrSingle = (input: Input, options?: OcrOptions): Promise<OcrResult> => (
 export type OcrPages = AsyncIterable<OcrResult>;
 
 /** OCR every page of a (possibly multi-page) PDF. */
-const ocrPages = (input: Input, options?: OcrOptions): OcrPages => {
+export const ocrPagesSingleProcess = (input: Input, options?: OcrOptions): OcrPages => {
 	let consumed = false;
 
 	const iterate = async function* iterate(): AsyncGenerator<OcrResult> {
@@ -154,6 +154,12 @@ const ocrPages = (input: Input, options?: OcrOptions): OcrPages => {
 
 	return { [Symbol.asyncIterator]: iterate };
 };
+
+const ocrPages = (input: Input, options?: OcrOptions): OcrPages => (
+	isMainThread
+		? ocrPagesWithService(input, options)
+		: ocrPagesSingleProcess(input, options)
+);
 
 /**
  * Recognize text in image or single-page-PDF bytes.

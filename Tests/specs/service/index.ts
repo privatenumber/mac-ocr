@@ -7,4 +7,5 @@ await describe('ocr service', async () => {
 	await import('./protocol.ts');
 	await import('./recovery.ts');
 	await import('./ownership.ts');
+	await import('./shared-apis.ts');
 });

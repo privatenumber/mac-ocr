@@ -3,10 +3,9 @@ import { ocr, createSearchablePdf } from '../../src/index.ts';
 import { fixtureData } from '../utils.ts';
 
 /**
- * A realistic mixed `Promise.all` burst: ordinary OCR calls share the serial
- * native service, while page streaming and searchable-PDF retain dedicated
- * subprocesses. This verifies the service and one-shot paths compose without
- * corrupting results or process lifecycle.
+ * A realistic mixed `Promise.all` burst: every main-thread operation shares
+ * the serial native service. This verifies FIFO service routing preserves
+ * results across unary, streaming, and PDF-artifact operations.
  */
 await describe('concurrency', async () => {
 	test('a parallel burst of mixed calls all resolve correctly', async () => {

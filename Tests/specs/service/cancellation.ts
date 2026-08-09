@@ -43,13 +43,9 @@ setTimeout(() => {}, 30_000)
 		);
 		const firstPid = wrapper.serviceApi.startingServicePidForTesting()!;
 		await fs.writeFile(wrapper.binaryPath, serviceShim({
-			onRequest: `if (request.command === 'ocr') {
-  frame({
-    id: request.id,
-    type: 'result',
-    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
-  })
-}`,
+			onRequest: `if (request.operation === 'ocr') {
+			  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] })
+			}`,
 		}));
 		const second = wrapper.api.ocr(Buffer.from('second')).catch((error: unknown) => error);
 		controller.abort();
@@ -123,18 +119,39 @@ setTimeout(() => {}, 30_000)
 		expect(await request).toMatchObject({ kind: 'abort' });
 	});
 
+	test('preserves caller abort when a PDF request completes after cancellation', async () => {
+		await using wrapper = await importWrapper(serviceShim({
+			onRequest: `if (request.operation === 'searchable-pdf') {
+  activeRequest = request
+} else if (request.command === 'cancel' && request.id === activeRequest?.id) {
+  complete(activeRequest, { name: crypto.randomUUID(), size: 1 })
+} else if (request.operation === 'ocr') {
+  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'next', observations: [] })
+}`,
+			setup: 'let activeRequest',
+		}), { service: true });
+		const controller = new AbortController();
+		const pending = wrapper.api.createSearchablePdf(
+			Buffer.from('pdf'),
+			{ signal: controller.signal },
+		).catch((error: unknown) => error);
+		await waitFor(
+			() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
+			'Expected the PDF request to start',
+		);
+		controller.abort();
+		expect(await pending).toMatchObject({ kind: 'abort' });
+		expect(await wrapper.api.ocr(Buffer.from('next'))).toMatchObject({ text: 'next' });
+	});
+
 	test('replaces a service that does not acknowledge cancellation', async () => {
 		await using wrapper = await importWrapper(serviceShim({
 			setup: `const marker = path.join(__dirname, '.started')
 const replacement = fs.existsSync(marker)
 fs.writeFileSync(marker, '')`,
-			onRequest: `if (replacement && request.command === 'ocr') {
-  frame({
-    id: request.id,
-    type: 'result',
-    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'replacement', observations: [] },
-  })
-}`,
+			onRequest: `if (replacement && request.operation === 'ocr') {
+			  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'replacement', observations: [] })
+			}`,
 		}), { service: true });
 		const controller = new AbortController();
 		const first = wrapper.api.ocr(
@@ -172,15 +189,11 @@ let blockNextOcr = true`,
     error: { kind: 'abort', message: 'aborted', exitCode: null, stderr: '' },
   })
   activeId = undefined
-} else if (request.command === 'ocr' && blockNextOcr) {
+} else if (request.operation === 'ocr' && blockNextOcr) {
   activeId = request.id
   blockNextOcr = false
-} else if (request.command === 'ocr') {
-  frame({
-    id: request.id,
-    type: 'result',
-    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'next', observations: [] },
-  })
+} else if (request.operation === 'ocr') {
+  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'next', observations: [] })
 }`,
 		}), { service: true });
 		const controller = new AbortController();
@@ -202,5 +215,29 @@ let blockNextOcr = true`,
 		]);
 		expect(result).toMatchObject({ text: 'next' });
 		expect(wrapper.serviceApi.servicePidForTesting()).toBe(pid);
+	});
+
+	test('replaces an unresponsive page stream without rejecting queued work', async () => {
+		await using wrapper = await importWrapper(serviceShim({
+			setup: `const marker = path.join(__dirname, '.started')
+const replacement = fs.existsSync(marker)
+fs.writeFileSync(marker, '')
+let activePageRequest`,
+			onRequest: `if (replacement && request.operation === 'ocr') {
+  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'replacement', observations: [] })
+} else if (request.operation === 'ocr-pages') {
+  activePageRequest = request
+} else if (request.command === 'pull' && request.id === activePageRequest?.id) {
+  item(request, 0, { page: 1, pageCount: 1, width: 1, height: 1, text: 'page', observations: [] })
+}`,
+		}), { service: true });
+		const iterator = wrapper.api.ocr.pages(Buffer.from('pages'))[Symbol.asyncIterator]();
+		expect(await iterator.next()).toMatchObject({ value: { text: 'page' } });
+		const queued = wrapper.api.ocr(Buffer.from('next'));
+		await iterator.return?.();
+		expect(await Promise.race([
+			queued,
+			setTimeout(8000, 'timeout'),
+		])).toMatchObject({ text: 'replacement' });
 	});
 }, { parallel: false });

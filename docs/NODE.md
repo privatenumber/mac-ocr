@@ -174,21 +174,21 @@ setTimeout(() => controller.abort(), 5_000)
 await ocr(bytes, { signal: controller.signal })   // rejects with MacOcrError, kind 'abort'
 ```
 
-Queued `ocr()` calls stop waiting immediately when aborted. An active call can take up to five seconds to stop. Aborted calls reject with `MacOcrError` kind `abort`.
+Queued main-thread calls stop waiting immediately when aborted. An active call can take up to five seconds to stop. Aborted calls reject with `MacOcrError` kind `abort`.
 
 ## Concurrency
 
-`ocr()` calls run one at a time. A large `Promise.all()` burst does not improve OCR throughput; prefer a serial loop or an application-level concurrency limit.
+Main-thread API calls run one at a time. A large `Promise.all()` burst does not improve OCR throughput; prefer a serial loop or an application-level concurrency limit.
 
 The waiting queue accepts up to 512 calls and a conservative 64 MiB memory budget. Additional calls reject with `MacOcrError` code `queue_capacity_exceeded`. One larger input is accepted when no other call is waiting.
 
 ## Runtime behavior
 
-Main-thread `ocr()` calls in one Node process share an internal native service. It does not keep Node alive while idle and is replaced after a crash or an unresponsive cancellation. Each Node process has its own service.
+Main-thread `ocr()`, `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` calls in one Node process share an internal native service and run FIFO. It does not keep Node alive while idle and is replaced after a crash or an unresponsive cancellation. Each Node process has its own service.
 
-Worker-thread calls, `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` run as one-shot processes. Abort and await active worker calls before forcibly terminating a worker, because termination can skip JavaScript cleanup while the one-shot child finishes.
+Worker-thread calls run as one-shot processes. Abort and await active worker calls before forcibly terminating a worker, because termination can skip JavaScript cleanup while the one-shot child finishes.
 
-API passwords never enter `argv`: shared `ocr()` calls send them through its internal request stream, while one-shot APIs use `MAC_OCR_PDF_PASSWORD`. Only the active input is written to a private temporary file and it is removed when the operation finishes.
+API passwords never enter `argv`: main-thread input calls send them through the internal request stream, while worker calls use `MAC_OCR_PDF_PASSWORD`. Only the active input is written to a private temporary file and it is removed when the operation finishes. Searchable-PDF artifacts use the same private directory and are removed after Node reads them.
 
 ## Tree-shaking
 

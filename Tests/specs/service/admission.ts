@@ -1,6 +1,7 @@
 import { setTimeout } from 'node:timers/promises';
 import { describe, expect, test } from 'manten';
 import { importWrapper } from '../../utils.ts';
+import { serviceShim } from './utils.ts';
 
 const stalledService = '#!/usr/bin/env node\nsetTimeout(() => {}, 30_000)\n';
 
@@ -174,5 +175,18 @@ await describe('admission', () => {
 			wrapper.serviceApi.stopService();
 			await request;
 		}
+	});
+
+	test('recovers after a request frame exceeds the protocol limit', async () => {
+		await using wrapper = await importWrapper(serviceShim({
+			onRequest: `if (request.operation === 'ocr') {
+  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'recovered', observations: [] })
+}`,
+		}), { service: true });
+		const oversized = await wrapper.api.ocr(Buffer.alloc(0), {
+			customWords: [String.fromCodePoint(0x1_F6_00).repeat((64 * 1024 * 1024 - 64) / 4)],
+		}).catch((error: unknown) => error);
+		expect(oversized).toMatchObject({ kind: 'usage' });
+		expect(await wrapper.api.ocr(Buffer.from('next'))).toMatchObject({ text: 'recovered' });
 	});
 }, { parallel: 2 });
