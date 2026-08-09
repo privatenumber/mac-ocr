@@ -96,6 +96,10 @@ const ocrDocumentPages = (input: Input, options?: OcrDocumentOptions): OcrDocume
 						invalidPageMetadata = true;
 						continue;
 					}
+					if (seenPages.has(page.page)) {
+						invalidPageMetadata = true;
+						continue;
+					}
 					expectedPageCount = page.pageCount;
 					seenPages.add(page.page);
 					yielded += 1;

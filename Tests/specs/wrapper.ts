@@ -351,7 +351,18 @@ describe('wrapper (shim binary)', () => {
 		}
 		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
 		expect((error as MacOcrError).kind).toBe('parse');
-		expect((error as MacOcrError).message).toMatch(/produced 3 of 3 pages/);
+		expect((error as MacOcrError).message).toMatch(/produced 2 of 3 pages/);
+	});
+
+	test('ocrDocument rejects a non-array candidate field', async () => {
+		const malformed = nestedDocumentJsonlLine.replace(
+			/"candidates":\[[^\]]+\]/,
+			'"candidates":"invalid"',
+		);
+		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '${malformed}'`));
+		const error = await wrapper.api.ocrDocument(Buffer.from('x')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect((error as MacOcrError).kind).toBe('parse');
 	});
 
 	test('ocrDocument.pages() preserves runtime errors across skipped pages', async () => {

@@ -120,9 +120,11 @@ const parseTextLine = (value: unknown): DocumentTextLine | undefined => {
 	) {
 		return undefined;
 	}
-	const candidates = value.candidates === undefined
-		? undefined
-		: getArray(value.candidates)?.map(parseCandidate);
+	const candidateValues = value.candidates === undefined ? undefined : getArray(value.candidates);
+	if (value.candidates !== undefined && candidateValues === undefined) {
+		return undefined;
+	}
+	const candidates = candidateValues?.map(parseCandidate);
 	if (candidates !== undefined && !allDefined(candidates)) {
 		return undefined;
 	}
