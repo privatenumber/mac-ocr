@@ -86,17 +86,18 @@ const ocrDocumentPages = (input: Input, options?: OcrDocumentOptions): OcrDocume
 		let completed = false;
 		let yielded = 0;
 		let expectedPageCount: number | undefined;
+		const seenPages = new Set<number>();
+		let invalidPageMetadata = false;
 		try {
 			for await (const line of createInterface({ input: spawned.proc.stdout })) {
 				const page = parseDocumentLine(line);
 				if (page !== undefined) {
 					if (!isValidPage(page, expectedPageCount)) {
-						throw new MacOcrError(`${label} produced invalid page metadata`, { kind: 'parse' });
-					}
-					if (page.page !== yielded + 1) {
-						throw new MacOcrError(`${label} produced pages out of order`, { kind: 'parse' });
+						invalidPageMetadata = true;
+						continue;
 					}
 					expectedPageCount = page.pageCount;
+					seenPages.add(page.page);
 					yielded += 1;
 					yield page;
 				}
@@ -116,8 +117,15 @@ const ocrDocumentPages = (input: Input, options?: OcrDocumentOptions): OcrDocume
 		if (expectedPageCount === undefined) {
 			throw new MacOcrError(`${label} produced no output`, { kind: 'parse' });
 		}
-		if (yielded !== expectedPageCount) {
-			throw new MacOcrError(`${label} produced ${yielded} of ${expectedPageCount} pages - some output could not be parsed`, { kind: 'parse' });
+		if (
+			invalidPageMetadata
+			|| seenPages.size !== expectedPageCount
+			|| yielded !== expectedPageCount
+		) {
+			throw new MacOcrError(
+				`${label} produced ${yielded} of ${expectedPageCount} pages - some output could not be parsed`,
+				{ kind: 'parse' },
+			);
 		}
 	};
 

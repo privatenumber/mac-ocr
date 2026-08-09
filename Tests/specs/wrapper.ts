@@ -351,7 +351,24 @@ describe('wrapper (shim binary)', () => {
 		}
 		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
 		expect((error as MacOcrError).kind).toBe('parse');
-		expect((error as MacOcrError).message).toContain('out of order');
+		expect((error as MacOcrError).message).toMatch(/produced 3 of 3 pages/);
+	});
+
+	test('ocrDocument.pages() preserves runtime errors across skipped pages', async () => {
+		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '${documentPageLine(2, 2, 'two')}' ; printf '%s\n' '{"schema":"mac-ocr.error","schemaVersion":1,"kind":"runtime","code":"batch_failed","message":"one or more inputs failed","exitCode":1,"command":"document"}' >&3; printf 'Error: page 1 failed\n' >&2; exit 1`));
+		const pages: number[] = [];
+		let error: unknown;
+		try {
+			for await (const page of wrapper.api.ocrDocument.pages(Buffer.from('x'))) {
+				pages.push(page.page);
+			}
+		} catch (error_) {
+			error = error_;
+		}
+		expect(pages).toEqual([2]);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect((error as MacOcrError).kind).toBe('runtime');
+		expect((error as MacOcrError).code).toBe('batch_failed');
 	});
 
 	test('ocrDocument maps an unavailable envelope', async () => {
