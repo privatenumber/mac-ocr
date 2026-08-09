@@ -14,22 +14,32 @@ import type {
 	TextCandidate,
 } from './types.ts';
 
+// The CLI is a separately versioned child process; validate its owned schema
+// instead of casting JSON and allowing output drift to corrupt the Node API.
+
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-const getString = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
+const getString = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
-const getNumber = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+const getNumber = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
 
 const getPositiveInteger = (value: unknown): number | undefined => {
 	const number = getNumber(value);
 	return number !== undefined && Number.isSafeInteger(number) && number > 0 ? number : undefined;
 };
 
-const getBoolean = (value: unknown): boolean | undefined => typeof value === 'boolean' ? value : undefined;
+const getBoolean = (value: unknown): boolean | undefined => (typeof value === 'boolean' ? value : undefined);
 
-const getArray = (value: unknown): unknown[] | undefined => Array.isArray(value) ? value : undefined;
+const getArray = (value: unknown): unknown[] | undefined => {
+	if (!Array.isArray(value)) {
+		return undefined;
+	}
+	return value;
+};
 
-const allDefined = <Value>(values: Array<Value | undefined>): values is Value[] => values.every(value => value !== undefined);
+const allDefined = <Value>(
+	values: Array<Value | undefined>,
+): values is Value[] => values.every(value => value !== undefined);
 
 const parseBoundingBox = (value: unknown): BoundingBox | undefined => {
 	if (!isRecord(value)) {
@@ -42,26 +52,39 @@ const parseBoundingBox = (value: unknown): BoundingBox | undefined => {
 	if (x === undefined || y === undefined || width === undefined || height === undefined) {
 		return undefined;
 	}
-	return { x, y, width, height };
+	return {
+		x,
+		y,
+		width,
+		height,
+	};
 };
 
 const parseRegion = (value: unknown): DocumentRegion | undefined => {
 	if (!isRecord(value)) {
 		return undefined;
 	}
-	const points = getArray(value.points)?.map(point => {
+	const points = getArray(value.points)?.map((point) => {
 		if (!isRecord(point)) {
 			return undefined;
 		}
 		const x = getNumber(point.x);
 		const y = getNumber(point.y);
-		return x === undefined || y === undefined ? undefined : { x, y };
+		return x === undefined || y === undefined
+			? undefined
+			: {
+				x,
+				y,
+			};
 	});
 	const boundingBox = parseBoundingBox(value.boundingBox);
 	if (points === undefined || !allDefined(points) || boundingBox === undefined) {
 		return undefined;
 	}
-	return { points, boundingBox };
+	return {
+		points,
+		boundingBox,
+	};
 };
 
 const parseCandidate = (value: unknown): TextCandidate | undefined => {
@@ -70,7 +93,12 @@ const parseCandidate = (value: unknown): TextCandidate | undefined => {
 	}
 	const text = getString(value.text);
 	const confidence = getNumber(value.confidence);
-	return text === undefined || confidence === undefined ? undefined : { text, confidence };
+	return text === undefined || confidence === undefined
+		? undefined
+		: {
+			text,
+			confidence,
+		};
 };
 
 const parseTextLine = (value: unknown): DocumentTextLine | undefined => {
@@ -92,15 +120,17 @@ const parseTextLine = (value: unknown): DocumentTextLine | undefined => {
 	) {
 		return undefined;
 	}
-	const candidates = value.candidates === undefined ? undefined : getArray(value.candidates)?.map(parseCandidate);
+	const candidates = value.candidates === undefined
+		? undefined
+		: getArray(value.candidates)?.map(parseCandidate);
 	if (candidates !== undefined && !allDefined(candidates)) {
 		return undefined;
 	}
-	const textDirection = value.textDirection;
+	const { textDirection } = value;
 	if (textDirection !== undefined && textDirection !== 'leftToRight' && textDirection !== 'rightToLeft' && textDirection !== 'topToBottom' && textDirection !== 'unknown') {
 		return undefined;
 	}
-	const shouldWrapToNextLine = value.shouldWrapToNextLine;
+	const { shouldWrapToNextLine } = value;
 	if (shouldWrapToNextLine !== undefined && typeof shouldWrapToNextLine !== 'boolean') {
 		return undefined;
 	}
@@ -123,10 +153,15 @@ const parseText = (value: unknown): DocumentText | undefined => {
 	const transcript = getString(value.transcript);
 	const boundingRegion = parseRegion(value.boundingRegion);
 	const lines = getArray(value.lines)?.map(parseTextLine);
-	if (transcript === undefined || boundingRegion === undefined || lines === undefined || !allDefined(lines)) {
+	if (
+		transcript === undefined
+		|| boundingRegion === undefined
+		|| lines === undefined
+		|| !allDefined(lines)
+	) {
 		return undefined;
 	}
-	const alignment = value.alignment;
+	const { alignment } = value;
 	if (alignment !== undefined && alignment !== 'center' && alignment !== 'leading' && alignment !== 'trailing') {
 		return undefined;
 	}
@@ -144,10 +179,21 @@ const parseIndexRange = (value: unknown): DocumentIndexRange | undefined => {
 	}
 	const start = getNumber(value.start);
 	const end = getNumber(value.end);
-	if (start === undefined || end === undefined || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < 0 || start > end) {
+	if (
+		start === undefined
+		|| end === undefined
+		|| !Number.isInteger(start)
+		|| !Number.isInteger(end)
+		|| start < 0
+		|| end < 0
+		|| start > end
+	) {
 		return undefined;
 	}
-	return { start, end };
+	return {
+		start,
+		end,
+	};
 };
 
 const parseContainer = (value: unknown, depth = 0): DocumentContainer | undefined => {
@@ -188,7 +234,7 @@ const parseTable = (value: unknown, depth: number): DocumentTable | undefined =>
 		return undefined;
 	}
 	const boundingRegion = parseRegion(value.boundingRegion);
-	const rows = getArray(value.rows)?.map(row => {
+	const rows = getArray(value.rows)?.map((row) => {
 		const cells = getArray(row)?.map(cell => parseTableCell(cell, depth + 1));
 		return cells !== undefined && allDefined(cells) ? cells : undefined;
 	});
@@ -199,7 +245,10 @@ const parseTable = (value: unknown, depth: number): DocumentTable | undefined =>
 	) {
 		return undefined;
 	}
-	return { boundingRegion, rows };
+	return {
+		boundingRegion,
+		rows,
+	};
 };
 
 const parseTableCell = (value: unknown, depth: number): DocumentTableCell | undefined => {
@@ -212,7 +261,11 @@ const parseTableCell = (value: unknown, depth: number): DocumentTableCell | unde
 	if (rowRange === undefined || columnRange === undefined || content === undefined) {
 		return undefined;
 	}
-	return { rowRange, columnRange, content };
+	return {
+		rowRange,
+		columnRange,
+		content,
+	};
 };
 
 const parseList = (value: unknown, depth: number): DocumentList | undefined => {
@@ -224,7 +277,10 @@ const parseList = (value: unknown, depth: number): DocumentList | undefined => {
 	if (boundingRegion === undefined || items === undefined || !allDefined(items)) {
 		return undefined;
 	}
-	return { boundingRegion, items };
+	return {
+		boundingRegion,
+		items,
+	};
 };
 
 const parseListItem = (value: unknown, depth: number): DocumentListItem | undefined => {
@@ -234,7 +290,7 @@ const parseListItem = (value: unknown, depth: number): DocumentListItem | undefi
 	const markerText = getString(value.markerText);
 	const text = getString(value.text);
 	const content = parseContainer(value.content, depth + 1);
-	const markerType = value.markerType;
+	const { markerType } = value;
 	if (
 		markerText === undefined
 		|| text === undefined
@@ -243,7 +299,12 @@ const parseListItem = (value: unknown, depth: number): DocumentListItem | undefi
 	) {
 		return undefined;
 	}
-	return { markerText, text, content, ...(markerType === undefined ? undefined : { markerType }) };
+	return {
+		markerText,
+		text,
+		content,
+		...(markerType === undefined ? undefined : { markerType }),
+	};
 };
 
 const parseDocument = (value: unknown): RecognizedDocument | undefined => {
@@ -255,7 +316,10 @@ const parseDocument = (value: unknown): RecognizedDocument | undefined => {
 	if (confidence === undefined || content === undefined) {
 		return undefined;
 	}
-	return { confidence, content };
+	return {
+		confidence,
+		content,
+	};
 };
 
 export const parseDocumentLine = (line: string): OcrDocumentResult | undefined => {
@@ -296,5 +360,15 @@ export const parseDocumentLine = (line: string): OcrDocumentResult | undefined =
 	) {
 		return undefined;
 	}
-	return { schema, schemaVersion, requestRevision, page, pageCount, width, height, text, documents };
+	return {
+		schema,
+		schemaVersion,
+		requestRevision,
+		page,
+		pageCount,
+		width,
+		height,
+		text,
+		documents,
+	};
 };

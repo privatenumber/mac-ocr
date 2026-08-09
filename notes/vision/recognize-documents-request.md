@@ -148,7 +148,9 @@ The same host recognizes a generated two-by-two ruled grid as one table with two
 
 It also recognizes a generated three-item numbered list as one list with decimal marker metadata and `ALPHA`, `BETA`, and `GAMMA` item text. This is a release-gated conversion test for simple ordered lists, not a general list-layout guarantee.
 
-## Required experiments before adoption
+## Follow-up characterization
+
+The current release contract covers a guarded macOS 26 API, one-shot process cancellation, root transcripts, and simple generated table/list conversion. The following experiments are required before expanding that contract to claim parity, generalized reading order, or native active-request cancellation.
 
 1. Compare document and legacy text recognition on fixtures for receipts, small text, multi-column pages, tables, lists, RTL text, rotation, and non-document images.
 2. Sweep `minimumTextHeightFraction` from the documented default to the current legacy-equivalent threshold and record text loss, runtime, and memory.

@@ -108,7 +108,10 @@ export type OcrOptions = CommonOptions & {
 };
 
 /** Options for {@link ocrDocument} and {@link ocrDocument.pages}. */
-export type OcrDocumentOptions = Omit<CommonOptions, 'fast' | 'confidence'> & {
+export type OcrDocumentOptions = Omit<CommonOptions, 'fast' | 'confidence' | 'languages'> & {
+
+	/** Document-recognition language identifiers, such as `en`. */
+	languages?: string[];
 
 	/** Maximum text candidates per recognized line (1-10). Default 1. */
 	maxCandidates?: number;

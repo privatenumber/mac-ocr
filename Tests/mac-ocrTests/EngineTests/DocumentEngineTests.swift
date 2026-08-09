@@ -56,6 +56,22 @@ import Testing
 	}
 
 	@Test(.disabled(if: !documentRecognitionAvailable, "Document recognition requires macOS 26."))
+	func regionOfInterestUsesTopLeftCoordinates() async throws {
+		let loaded = try EngineTestSupport.loadImage("hello.png")
+		let full = try await DocumentEngine.run(
+			session: VisionSession(image: loaded.image, orientation: loaded.orientation),
+			options: DocumentOptions()
+		)
+		let topEdge = try await DocumentEngine.run(
+			session: VisionSession(image: loaded.image, orientation: loaded.orientation),
+			options: DocumentOptions(regionOfInterest: BoundingBox(x: 0, y: 0, width: 1, height: 0.05))
+		)
+
+		#expect(full.text.contains("Hello World"))
+		#expect(topEdge.text.isEmpty)
+	}
+
+	@Test(.disabled(if: !documentRecognitionAvailable, "Document recognition requires macOS 26."))
 	func recognizesTableCellsInRows() async throws {
 		let result = try await DocumentEngine.run(
 			session: VisionSession(image: DocumentTestSupport.makeTableRaster()),

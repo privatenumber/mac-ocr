@@ -1,7 +1,12 @@
+import { createInterface } from 'node:readline';
 import { isMainThread } from 'node:worker_threads';
 import { buildArgs } from './args.ts';
-import { createPageAnalysis } from './page-analysis.ts';
-import { spawnBinary, type Spawned } from './process.ts';
+import { MacOcrError } from './errors.ts';
+import {
+	spawnBinary,
+	waitForExit,
+	type Spawned,
+} from './process.ts';
 import { ocrWithService } from './service/index.ts';
 import type { Input, OcrOptions, OcrResult } from './types.ts';
 
@@ -40,10 +45,41 @@ const spawnOcr = (input: Input, options?: OcrOptions): Spawned => spawnBinary(
 );
 
 /** OCR a single image or single-page PDF. Throws if the input has multiple pages. */
-export const ocrSingleProcess = (
-	input: Input,
-	options?: OcrOptions,
-): Promise<OcrResult> => ocrProcessAnalysis.singleProcess(input, options);
+export const ocrSingleProcess = async (input: Input, options?: OcrOptions): Promise<OcrResult> => {
+	const spawned = spawnOcr(input, options);
+	let first: OcrResult | undefined;
+
+	try {
+		for await (const line of createInterface({ input: spawned.proc.stdout })) {
+			const page = parseLine(line);
+			if (page !== undefined) {
+				first = page;
+				break;
+			}
+		}
+	} catch (error) {
+		await waitForExit(spawned, label);
+		throw new MacOcrError(`${label} output could not be read`, {
+			kind: 'parse',
+			cause: error,
+		});
+	}
+
+	if (first !== undefined && first.pageCount > 1) {
+		spawned.proc.kill();
+		await spawned.exit.catch(() => {});
+		throw new MacOcrError(
+			'Input has multiple pages. Use `ocr.pages()` to read them all.',
+			{ kind: 'usage' },
+		);
+	}
+
+	await waitForExit(spawned, label);
+	if (first === undefined) {
+		throw new MacOcrError(`${label} produced no output`, { kind: 'parse' });
+	}
+	return first;
+};
 
 const ocrSingle = (input: Input, options?: OcrOptions): Promise<OcrResult> => (
 	isMainThread
@@ -62,20 +98,54 @@ const ocrSingle = (input: Input, options?: OcrOptions): Promise<OcrResult> => (
 export type OcrPages = AsyncIterable<OcrResult>;
 
 /** OCR every page of a (possibly multi-page) PDF. */
-const ocrProcessAnalysis = createPageAnalysis({
-	label,
-	multiPageMessage: 'Input has multiple pages. Use `ocr.pages()` to read them all.',
-	pageReuseMessage: 'This ocr.pages() result was already consumed. Call ocr.pages() again to re-read it.',
-	missingPageMessage: (yielded, expected) => (
-		`${label} produced ${yielded} of ${expected} pages — some output could not be parsed`
-	),
-	spawn: spawnOcr,
-	parseLine,
-});
+const ocrPages = (input: Input, options?: OcrOptions): OcrPages => {
+	let consumed = false;
 
-const ocrPages = (input: Input, options?: OcrOptions): OcrPages => (
-	ocrProcessAnalysis.pages(input, options)
-);
+	const iterate = async function* iterate(): AsyncGenerator<OcrResult> {
+		if (consumed) {
+			throw new MacOcrError(
+				'This ocr.pages() result was already consumed. Call ocr.pages() again to re-read it.',
+				{ kind: 'usage' },
+			);
+		}
+		consumed = true;
+
+		const spawned = spawnOcr(input, options);
+		let completed = false;
+		let yielded = 0;
+		let expectedPageCount: number | undefined;
+		try {
+			for await (const line of createInterface({ input: spawned.proc.stdout })) {
+				const page = parseLine(line);
+				if (page !== undefined) {
+					yielded += 1;
+					expectedPageCount = page.pageCount;
+					yield page;
+				}
+			}
+			completed = true;
+		} finally {
+			if (completed) {
+				await waitForExit(spawned, label);
+			} else {
+				spawned.proc.kill();
+				await spawned.exit.catch(() => {});
+			}
+		}
+
+		if (expectedPageCount === undefined) {
+			throw new MacOcrError(`${label} produced no output`, { kind: 'parse' });
+		}
+		if (yielded < expectedPageCount) {
+			throw new MacOcrError(
+				`${label} produced ${yielded} of ${expectedPageCount} pages — some output could not be parsed`,
+				{ kind: 'parse' },
+			);
+		}
+	};
+
+	return { [Symbol.asyncIterator]: iterate };
+};
 
 /**
  * Recognize text in image or single-page-PDF bytes.

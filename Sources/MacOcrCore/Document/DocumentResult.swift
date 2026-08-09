@@ -140,6 +140,7 @@ public struct DocumentTextLine: Encodable, Sendable {
 		try container.encode(transcript, forKey: .transcript)
 		try container.encode(confidence, forKey: .confidence)
 		try container.encode(boundingRegion, forKey: .boundingRegion)
+		// Match ordinary OCR: omit the redundant candidates field at the default.
 		if !candidates.isEmpty {
 			try container.encode(candidates, forKey: .candidates)
 		}

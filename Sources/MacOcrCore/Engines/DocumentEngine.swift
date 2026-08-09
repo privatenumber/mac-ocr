@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import ImageIO
 import Vision
 
 public struct DocumentUnavailableError: LocalizedError {
@@ -61,14 +60,9 @@ private func prepareDocumentOptions(_ options: DocumentOptions) throws -> Docume
 		throw DocumentLanguageError("Unsupported document recognition \(label): \(unsupported.joined(separator: ", "))")
 	}
 
-	return DocumentOptions(
-		languages: languages,
-		usesLanguageCorrection: options.usesLanguageCorrection,
-		customWords: options.customWords,
-		minimumTextHeight: options.minimumTextHeight,
-		maxCandidates: options.maxCandidates,
-		regionOfInterest: options.regionOfInterest
-	)
+	var canonicalizedOptions = options
+	canonicalizedOptions.languages = languages
+	return canonicalizedOptions
 }
 
 public struct DocumentLanguageError: LocalizedError {
@@ -162,8 +156,8 @@ private func documentTable(_ table: DocumentObservation.Container.Table, maxCand
 		rows: table.rows.map { row in
 			row.map { cell in
 				DocumentTableCell(
-					rowRange: documentIndexRange(cell.rowRange),
-					columnRange: documentIndexRange(cell.columnRange),
+					rowRange: DocumentIndexRange(start: cell.rowRange.lowerBound, end: cell.rowRange.upperBound),
+					columnRange: DocumentIndexRange(start: cell.columnRange.lowerBound, end: cell.columnRange.upperBound),
 					content: documentContainer(cell.content, maxCandidates: maxCandidates)
 				)
 			}
@@ -194,10 +188,6 @@ private func documentRegion(_ region: NormalizedRegion) -> DocumentRegion {
 		},
 		boundingBox: BoundingBox(region.boundingBox.cgRect)
 	)
-}
-
-private func documentIndexRange(_ range: ClosedRange<Int>) -> DocumentIndexRange {
-	DocumentIndexRange(start: range.lowerBound, end: range.upperBound)
 }
 
 @available(macOS 26.0, *)
