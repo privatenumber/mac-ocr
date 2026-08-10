@@ -341,6 +341,9 @@ const startNativeService = (
 			return true;
 		}
 		if (response.type === 'item') {
+			if (request.type === 'stream' && request.cancelled) {
+				return true;
+			}
 			if (
 				request.type !== 'stream'
 				|| response.sequence !== request.nextSequence

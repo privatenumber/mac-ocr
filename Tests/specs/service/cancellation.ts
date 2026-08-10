@@ -1,5 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, test } from 'manten';
 import { ocr } from '../../../src/index.ts';
 import {
@@ -124,7 +125,10 @@ setTimeout(() => {}, 30_000)
 			onRequest: `if (request.operation === 'searchable-pdf') {
   activeRequest = request
 } else if (request.command === 'cancel' && request.id === activeRequest?.id) {
-  complete(activeRequest, { name: crypto.randomUUID(), size: 1 })
+  const artifactPath = path.join(directory, activeRequest.outputName)
+  fs.writeFileSync(artifactPath, Buffer.from('%PDF'))
+  fs.writeFileSync(path.join(__dirname, 'artifact-path'), artifactPath)
+  complete(activeRequest, { name: activeRequest.outputName, size: 4 })
 } else if (request.operation === 'ocr') {
   complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'next', observations: [] })
 }`,
@@ -141,7 +145,41 @@ setTimeout(() => {}, 30_000)
 		);
 		controller.abort();
 		expect(await pending).toMatchObject({ kind: 'abort' });
+		const artifactPath = await fs.readFile(
+			path.join(path.dirname(wrapper.binaryPath), 'artifact-path'),
+			'utf8',
+		);
+		await expect(fs.access(artifactPath)).rejects.toMatchObject({ code: 'ENOENT' });
 		expect(await wrapper.api.ocr(Buffer.from('next'))).toMatchObject({ text: 'next' });
+	});
+
+	test('rejects a late page after cancellation', async () => {
+		await using wrapper = await importWrapper(serviceShim({
+			setup: 'let activeRequest',
+			onRequest: `if (request.operation === 'ocr-pages') {
+  activeRequest = request
+} else if (request.command === 'cancel' && request.id === activeRequest?.id) {
+  item(activeRequest, 0, { page: 1, pageCount: 1, width: 1, height: 1, text: 'late page', observations: [] })
+  frame({
+    id: activeRequest.id,
+    type: 'error',
+    error: { kind: 'abort', message: 'aborted', exitCode: null, stderr: '' },
+  })
+}`,
+		}), { service: true });
+		const controller = new AbortController();
+		const iterator = wrapper.api.ocr.pages(
+			Buffer.from('pages'),
+			{ signal: controller.signal },
+		)[Symbol.asyncIterator]();
+		const next = iterator.next().catch((error: unknown) => error);
+		await waitFor(
+			() => wrapper.serviceApi.pendingServiceRequestsForTesting() > 0,
+			'Expected the page stream to start',
+		);
+		controller.abort();
+		expect(await next).toMatchObject({ kind: 'abort' });
+		await iterator.return?.();
 	});
 
 	test('replaces a service that does not acknowledge cancellation', async () => {

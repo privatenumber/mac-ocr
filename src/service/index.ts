@@ -123,12 +123,13 @@ const resultForRequest = async (
 	request: QueuedRequest,
 	inputName: string | undefined,
 ): Promise<unknown> => {
+	const outputName = request.operation === 'searchable-pdf' ? crypto.randomUUID() : undefined;
 	const nativeRequest = {
 		operation: request.operation,
 		inputName,
 		arguments: request.arguments,
 		password: request.password,
-		outputName: request.operation === 'searchable-pdf' ? crypto.randomUUID() : undefined,
+		outputName,
 	};
 	if (request.type === 'stream') {
 		const stream = service.stream(nativeRequest, request.signal);
@@ -154,6 +155,9 @@ const resultForRequest = async (
 			await fs.rm(outputPath, { force: true }).catch(() => {});
 		}
 	} catch (error) {
+		if (outputName) {
+			await fs.rm(path.join(service.inputDirectory, outputName), { force: true }).catch(() => {});
+		}
 		await retireMissingServiceDirectory(service.inputDirectory);
 		throw error;
 	}
