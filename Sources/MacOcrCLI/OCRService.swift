@@ -526,7 +526,7 @@ private func processServiceDocument(
 		try Task.checkCancellation()
 		guard loader.count == 1 else {
 			throw ServiceInputUsageError(
-				errorDescription: "Input has multiple pages. Use `document.pages()` to read them all."
+				errorDescription: "Input has multiple pages. Use `ocrDocument.pages()` to read them all."
 			)
 		}
 		let result = try await serviceDocumentResult(loader: loader, pageIndex: 0, options: options)

@@ -52,5 +52,6 @@ await describe('ocrDocument', () => {
 			return;
 		}
 		expect(error).toMatchObject({ kind: 'usage' });
+		expect((error as Error).message).toContain('ocrDocument.pages()');
 	});
 }, { parallel: false });
