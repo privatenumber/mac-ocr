@@ -175,7 +175,7 @@ mac-ocr document invoice.png -l en --max-candidates 3
 
 | Flag | Default | Effect |
 | --- | --- | --- |
-| `-l, --language <code>` | auto | Document-recognition language identifier, repeatable. Use the runtime's two-letter ISO identifiers such as `en`; ordinary OCR's regional BCP-47 values such as `en-US` are not accepted. |
+| `-l, --language <code>` | auto | Document-recognition language identifier, repeatable. Use an identifier reported by this macOS runtime, such as `en`, `zh-TW`, or `ar-SA`. `en-US` is not supported by the current document recognizer. |
 | `-w, --custom-words <word>` | - | Custom vocabulary word, repeatable. Custom words have no effect with `--no-language-correction`. |
 | `--custom-words-file <path>` | - | Custom vocabulary file, one word per line. |
 | `--no-language-correction` | off | Return raw recognition results without language correction. |

@@ -142,7 +142,7 @@ The current mac-ocr product has no reason to replace its ordinary OCR or searcha
 
 An Apple Developer Forums report describes receipt content splitting into separate paragraphs and columns. The thread has no Apple staff resolution, so it is not an API contract, but it is a useful regression fixture category: [RecognizeDocumentsRequest for receipts](https://developer.apple.com/forums/thread/788381).
 
-On the Xcode 26.6 / macOS 26.5.2 arm64 probe host, `en` succeeds and `en-US` is rejected as unsupported. Keep this feature's language interface aligned with the document request's reported minimal identifiers unless a future release demonstrates a safe canonical conversion.
+On the Xcode 26.6 / macOS 26.5.2 arm64 probe host, `en` succeeds and `en-US` is rejected as unsupported. Keep this feature's language interface aligned with the identifiers reported by the document request; those include regional identifiers for some languages, so do not constrain callers to two-letter codes.
 
 The same host recognizes a generated two-by-two ruled grid as one table with two rows and two columns. This is a release-gated mac-ocr conversion test, not a claim that arbitrary table layouts have stable cross-release semantics.
 

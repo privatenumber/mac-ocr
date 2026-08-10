@@ -96,7 +96,7 @@ mac-ocr document invoice.png -l en --max-candidates 3
 
 - Requires macOS 26+. On older systems it reports an unavailable error; use ordinary OCR if structure is not required.
 - Accepts `--format`, `--output`, `--pdf-dpi`, `--roi`, and `--password` like OCR.
-- Document languages use the request's two-letter ISO identifiers, for example `-l en`; ordinary OCR's `en-US` form is not accepted.
+- Document languages use identifiers reported by the current macOS runtime, for example `-l en`, `-l zh-TW`, or `-l ar-SA`. `en-US` is not accepted by the current document recognizer.
 - Accepts `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, and `--max-candidates`.
 - Does not accept `--fast` or `--confidence` because the document recognizer cannot preserve those ordinary-OCR contracts.
 - Do not concatenate paragraphs, tables, and lists to form text. Use root `text`; structural collections are overlapping views of the document.
