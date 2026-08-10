@@ -18,8 +18,15 @@ await describe('ocrDocument', () => {
 				height: 1,
 			},
 		}).catch((error: unknown) => error);
+		const controller = new AbortController();
+		controller.abort();
+		const abortError = await ocrDocument(Buffer.from('document'), {
+			signal: controller.signal,
+		}).catch((error: unknown) => error);
 		expect(inputError).toBeInstanceOf(TypeError);
 		expect(optionsError).toBeInstanceOf(RangeError);
+		expect(abortError).toMatchObject({ kind: 'abort' });
+		expect((abortError as Error).message).toBe('mac-ocr operation was aborted');
 	});
 
 	test('returns structured content for an image', async () => {
