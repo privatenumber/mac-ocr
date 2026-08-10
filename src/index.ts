@@ -6,7 +6,7 @@
  * code and pass the bytes.
  *
  * ```ts
- * import { ocr, createSearchablePdf } from 'mac-ocr'
+ * import { ocr, ocrDocument, createSearchablePdf } from 'mac-ocr'
  * import fs from 'node:fs/promises'
  *
  * const { text } = await ocr(await fs.readFile('receipt.jpg'))
@@ -16,11 +16,14 @@
  * }
  *
  * const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'))
+ * const document = await ocrDocument(await fs.readFile('receipt.jpg'))
  * ```
  */
 
 export { ocr } from './ocr.ts';
 export type { OcrPages } from './ocr.ts';
+export { ocrDocument } from './document.ts';
+export type { OcrDocumentPages } from './document.ts';
 export { createSearchablePdf } from './searchable-pdf.ts';
 export { supportedLanguages } from './languages.ts';
 
@@ -36,5 +39,17 @@ export type {
 	RegionOfInterest,
 	CommonOptions,
 	OcrOptions,
+	OcrDocumentOptions,
+	OcrDocumentResult,
+	RecognizedDocument,
+	DocumentContainer,
+	DocumentText,
+	DocumentTextLine,
+	DocumentRegion,
+	DocumentIndexRange,
+	DocumentTable,
+	DocumentTableCell,
+	DocumentList,
+	DocumentListItem,
 	SearchablePdfOptions,
 } from './types.ts';

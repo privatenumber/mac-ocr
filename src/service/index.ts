@@ -5,7 +5,9 @@ import path from 'node:path';
 import { buildArgs } from '../args.ts';
 import { MacOcrError } from '../errors.ts';
 import { toBuffer } from '../process.ts';
-import type { Input, OcrOptions, OcrResult } from '../types.ts';
+import type {
+	Input, OcrDocumentResult, OcrOptions, OcrResult,
+} from '../types.ts';
 import {
 	serviceAbortFailure,
 	serviceFailure,
@@ -330,6 +332,34 @@ export const ocrWithService = async (input: Input, options?: OcrOptions): Promis
 	);
 	return result as OcrResult;
 };
+
+export const ocrDocumentWithService = (
+	input: Input,
+	arguments_: string[],
+	password: string | undefined,
+	signal: AbortSignal | undefined,
+): Promise<OcrDocumentResult> => queueRequest(
+	'unary',
+	'document',
+	input,
+	arguments_,
+	password,
+	signal,
+) as Promise<OcrDocumentResult>;
+
+export const ocrDocumentPagesWithService = (
+	input: Input,
+	arguments_: string[],
+	password: string | undefined,
+	signal: AbortSignal | undefined,
+): Promise<NativeStream<OcrDocumentResult>> => queueRequest(
+	'stream',
+	'document-pages',
+	input,
+	arguments_,
+	password,
+	signal,
+) as Promise<NativeStream<OcrDocumentResult>>;
 
 export const ocrPagesWithService = (
 	input: Input,

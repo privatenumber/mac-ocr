@@ -107,6 +107,102 @@ export type OcrOptions = CommonOptions & {
 	maxCandidates?: number;
 };
 
+/** Options for {@link ocrDocument} and {@link ocrDocument.pages}. */
+export type OcrDocumentOptions = Omit<CommonOptions, 'fast' | 'confidence' | 'languages'> & {
+
+	/** Document-recognition language identifiers, such as `en`. */
+	languages?: string[];
+
+	/** Maximum text candidates per recognized line (1–10). Default 1. */
+	maxCandidates?: number;
+};
+
+/** Normalized document region with top-left-origin points and bounding box. */
+export type DocumentRegion = {
+	points: Array<{
+		x: number;
+		y: number;
+	}>;
+	boundingBox: BoundingBox;
+};
+
+export type DocumentTextLine = {
+	transcript: string;
+	confidence: number;
+	boundingRegion: DocumentRegion;
+	candidates?: TextCandidate[];
+	recognitionLanguages: string[];
+	isTitle: boolean;
+	textDirection?: 'leftToRight' | 'rightToLeft' | 'topToBottom' | 'unknown';
+	shouldWrapToNextLine?: boolean;
+};
+
+export type DocumentText = {
+	transcript: string;
+	boundingRegion: DocumentRegion;
+	alignment?: 'center' | 'leading' | 'trailing';
+	lines: DocumentTextLine[];
+};
+
+export type DocumentIndexRange = {
+
+	/** Inclusive, zero-based. */
+	start: number;
+
+	/** Inclusive, zero-based. */
+	end: number;
+};
+
+export type DocumentTableCell = {
+	rowRange: DocumentIndexRange;
+	columnRange: DocumentIndexRange;
+	content: DocumentContainer;
+};
+
+export type DocumentTable = {
+	boundingRegion: DocumentRegion;
+	rows: DocumentTableCell[][];
+};
+
+export type DocumentListItem = {
+	markerType?: 'bullet' | 'hyphen' | 'lowercaseLatin' | 'uppercaseLatin' | 'decimal' | 'decorativeDecimal' | 'compositeDecimal' | 'unknown';
+	markerText: string;
+	text: string;
+	content: DocumentContainer;
+};
+
+export type DocumentList = {
+	boundingRegion: DocumentRegion;
+	items: DocumentListItem[];
+};
+
+export type DocumentContainer = {
+	boundingRegion: DocumentRegion;
+	text: DocumentText;
+	title?: DocumentText;
+	paragraphs: DocumentText[];
+	tables: DocumentTable[];
+	lists: DocumentList[];
+};
+
+export type RecognizedDocument = {
+	confidence: number;
+	content: DocumentContainer;
+};
+
+/** Structured result for one image or PDF page. */
+export type OcrDocumentResult = {
+	schema: 'mac-ocr.document';
+	schemaVersion: 1;
+	requestRevision: number;
+	page: number;
+	pageCount: number;
+	width: number;
+	height: number;
+	text: string;
+	documents: RecognizedDocument[];
+};
+
 /** Options for {@link createSearchablePdf}. */
 export type SearchablePdfOptions = CommonOptions & {
 

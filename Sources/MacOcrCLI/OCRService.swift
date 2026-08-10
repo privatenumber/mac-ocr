@@ -46,6 +46,36 @@ private struct ServiceResult: Encodable {
 	let observations: [Observation]
 }
 
+private struct ServiceDocumentResult: Encodable {
+	let page: Int
+	let pageCount: Int
+	let width: Int
+	let height: Int
+	let schema: String
+	let schemaVersion: Int
+	let requestRevision: Int
+	let text: String
+	let documents: [RecognizedDocument]
+
+	init(
+		page: Int,
+		pageCount: Int,
+		width: Int,
+		height: Int,
+		result: DocumentResult
+	) {
+		self.page = page
+		self.pageCount = pageCount
+		self.width = width
+		self.height = height
+		schema = result.schema
+		schemaVersion = result.schemaVersion
+		requestRevision = result.requestRevision
+		text = result.text
+		documents = result.documents
+	}
+}
+
 private struct ServiceArtifact: Encodable {
 	let name: String
 	let size: Int
@@ -273,6 +303,47 @@ private func serviceOcrCommand(request: ServiceRequest, inputPath: String) throw
 	return try OCRCommand.parse(arguments + [inputPath])
 }
 
+private func serviceDocumentCommand(request: ServiceRequest, inputPath: String) throws -> DocumentCommand {
+	guard let arguments = request.arguments else {
+		throw UsageError("Missing service request arguments")
+	}
+	return try DocumentCommand.parse(arguments + [inputPath])
+}
+
+private func serviceDocumentOptions(_ command: DocumentCommand) throws -> DocumentOptions {
+	try DocumentEngine.checkAvailability()
+	do {
+		return try DocumentEngine.prepare(
+			options: command.recognition.buildDocumentOptions(
+				regionOfInterest: try command.common.roi.map(parseRegionOfInterest)
+			)
+		)
+	} catch let error as DocumentLanguageError {
+		throw ValidationError(error.message)
+	}
+}
+
+private func serviceDocumentResult(
+	loader: ImageLoader,
+	pageIndex: Int,
+	options: DocumentOptions
+) async throws -> ServiceDocumentResult {
+	try Task.checkCancellation()
+	let loaded = try loader.load(pageIndex)
+	try Task.checkCancellation()
+	let result = try await DocumentEngine.run(
+		session: VisionSession(image: loaded.image, orientation: loaded.orientation),
+		options: options
+	)
+	return ServiceDocumentResult(
+		page: pageIndex + 1,
+		pageCount: loader.count,
+		width: loaded.displayWidth,
+		height: loaded.displayHeight,
+		result: result
+	)
+}
+
 private func serviceUsageError(
 	_ errorMessage: String,
 	command: ParsableCommand.Type
@@ -298,6 +369,16 @@ private func serviceError(
 	command: ParsableCommand.Type
 ) -> ServiceError {
 	let commandName = command.configuration.commandName ?? "mac-ocr"
+	if error is DocumentUnavailableError {
+		let message = "Document recognition requires macOS 26 or later"
+		return ServiceError(
+			kind: "unavailable",
+			code: "document_recognition_unavailable",
+			message: message,
+			exitCode: 1,
+			stderr: "Error: \(message)"
+		)
+	}
 	if error is CancellationError {
 		return ServiceError(
 			kind: "abort",
@@ -419,6 +500,83 @@ private func processServicePages(
 			ServiceErrorResponse(
 				id: request.id,
 				error: serviceError(error, inputPath: inputPath, command: OCRCommand.self)
+			))
+	}
+}
+
+private func processServiceDocument(
+	request: ServiceRequest,
+	inputDirectory: URL,
+	responseControl: ServiceResponseControl
+) async throws {
+	let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
+	do {
+		guard let inputPath else {
+			throw UsageError("Invalid service input name")
+		}
+		defer { try? FileManager.default.removeItem(atPath: inputPath) }
+		let command = try serviceDocumentCommand(request: request, inputPath: inputPath)
+		let options = try serviceDocumentOptions(command)
+		try Task.checkCancellation()
+		let loader = try await openSource(
+			.file(inputPath),
+			pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
+			pdfPassword: request.password
+		)
+		try Task.checkCancellation()
+		guard loader.count == 1 else {
+			throw ServiceInputUsageError(
+				errorDescription: "Input has multiple pages. Use `document.pages()` to read them all."
+			)
+		}
+		let result = try await serviceDocumentResult(loader: loader, pageIndex: 0, options: options)
+		try responseControl.write(ServiceComplete(id: request.id, result: result))
+	} catch {
+		try responseControl.write(
+			ServiceErrorResponse(
+				id: request.id,
+				error: serviceError(error, inputPath: inputPath, command: DocumentCommand.self)
+			))
+	}
+}
+
+private func processServiceDocumentPages(
+	request: ServiceRequest,
+	inputDirectory: URL,
+	responseControl: ServiceResponseControl,
+	credits: ServiceCredits
+) async throws {
+	let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
+	do {
+		guard let inputPath else {
+			throw UsageError("Invalid service input name")
+		}
+		defer { try? FileManager.default.removeItem(atPath: inputPath) }
+		let command = try serviceDocumentCommand(request: request, inputPath: inputPath)
+		let options = try serviceDocumentOptions(command)
+		try Task.checkCancellation()
+		let loader = try await openSource(
+			.file(inputPath),
+			pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
+			pdfPassword: request.password
+		)
+		try Task.checkCancellation()
+		for pageIndex in 0..<loader.count {
+			try await credits.wait()
+			let result = try await serviceDocumentResult(loader: loader, pageIndex: pageIndex, options: options)
+			try responseControl.write(
+				ServiceItem(
+					id: request.id,
+					sequence: pageIndex,
+					result: result
+				))
+		}
+		try responseControl.write(ServiceComplete<ServiceDocumentResult>(id: request.id, result: nil))
+	} catch {
+		try responseControl.write(
+			ServiceErrorResponse(
+				id: request.id,
+				error: serviceError(error, inputPath: inputPath, command: DocumentCommand.self)
 			))
 	}
 }
@@ -558,7 +716,7 @@ public enum OCRService {
 					activeRequest = nil
 				}
 				let responseControl = ServiceResponseControl()
-				let credits = operation == "ocr-pages" ? ServiceCredits() : nil
+				let credits = operation == "ocr-pages" || operation == "document-pages" ? ServiceCredits() : nil
 				let task = Task {
 					do {
 						switch operation {
@@ -573,6 +731,22 @@ public enum OCRService {
 								throw MessageError("Missing service page credits")
 							}
 							try await processServicePages(
+								request: request,
+								inputDirectory: inputDirectory,
+								responseControl: responseControl,
+								credits: credits
+							)
+						case "document":
+							try await processServiceDocument(
+								request: request,
+								inputDirectory: inputDirectory,
+								responseControl: responseControl
+							)
+						case "document-pages":
+							guard let credits else {
+								throw MessageError("Missing service page credits")
+							}
+							try await processServiceDocumentPages(
 								request: request,
 								inputDirectory: inputDirectory,
 								responseControl: responseControl,

@@ -5,6 +5,7 @@ await describe('mac-ocr', async () => {
 	// Pure/shim specs below can run concurrently.
 	await import('./specs/ocr.ts');
 	await import('./specs/service/index.ts');
+	await import('./specs/document.ts');
 	await import('./specs/pages.ts');
 	await import('./specs/searchable-pdf.ts');
 	await import('./specs/concurrency.ts');

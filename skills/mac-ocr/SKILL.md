@@ -1,6 +1,6 @@
 ---
 name: mac-ocr
-description: Run the `mac-ocr` macOS CLI (or its Node.js API) to recognize text in images and PDFs, extract structured document content on macOS 26+, or create a searchable PDF from a scanned PDF or an image with an invisible selectable text layer. Use when asked to OCR, extract or read text from an image or PDF, stream text from a large PDF page by page, extract paragraphs/tables/lists from a document, make a scanned PDF searchable/selectable, or convert an image (PNG, JPEG, HEIC, ...) into a searchable PDF - on-device via Apple's Vision framework. Covers the default OCR action (text/JSON/JSONL output, batching, stdin, URLs, languages, regions, encrypted-PDF passwords), the macOS 26 `document`, `searchable-pdf`, and `languages` subcommands, and the Node API (`ocr`, `ocr.pages`, `createSearchablePdf`, `supportedLanguages`). macOS only; not for editing or replacing a PDF's existing text.
+description: Run the `mac-ocr` macOS CLI (or its Node.js API) to recognize text in images and PDFs, extract structured document content on macOS 26+, or create a searchable PDF from a scanned PDF or an image with an invisible selectable text layer. Use when asked to OCR, extract or read text from an image or PDF, stream text from a large PDF page by page, extract paragraphs/tables/lists from a document, make a scanned PDF searchable/selectable, or convert an image (PNG, JPEG, HEIC, ...) into a searchable PDF - on-device via Apple's Vision framework. Covers the default OCR action (text/JSON/JSONL output, batching, stdin, URLs, languages, regions, encrypted-PDF passwords), the macOS 26 `document`, `searchable-pdf`, and `languages` subcommands, and the Node API (`ocr`, `ocr.pages`, `ocrDocument`, `ocrDocument.pages`, `createSearchablePdf`, `supportedLanguages`). macOS only; not for editing or replacing a PDF's existing text.
 ---
 
 # mac-ocr
@@ -142,12 +142,14 @@ mac-ocr languages --fast    # fast recognizer's set
 
 ## Node.js API
 
-The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
+The package also exposes a typed, promise-based API (`import { ocr, ocrDocument, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
 
 ```ts
 const { text, observations } = await ocr(bytes)          // single image or single-page PDF
 for await (const page of ocr.pages(pdfBytes)) { /* … */ } // stream multi-page PDF
 const pages = await Array.fromAsync(ocr.pages(pdfBytes))  // …or collect → OcrResult[]
+const document = await ocrDocument(bytes, { languages: ['en'] }) // macOS 26+, single page
+for await (const page of ocrDocument.pages(pdfBytes)) { /* … */ }
 const pdf = await createSearchablePdf(bytes)                    // → Uint8Array (PDF bytes)
 const langs = await supportedLanguages()                  // → string[] (ocr + createSearchablePdf)
 ```

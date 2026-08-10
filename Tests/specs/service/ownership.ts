@@ -127,16 +127,22 @@ await ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
 		const source = `
 import fs from 'node:fs/promises'
 import { parentPort } from 'node:worker_threads'
-import { ocr } from ${JSON.stringify(indexUrl)}
+import { ocr, ocrDocument } from ${JSON.stringify(indexUrl)}
 import { servicePidForTesting } from ${JSON.stringify(serviceUrl)}
-const result = await ocr(await fs.readFile(new URL(${JSON.stringify(fixtureUrl)})))
-parentPort.postMessage([result.text.includes('Hello World'), servicePidForTesting() ?? null])
+const bytes = await fs.readFile(new URL(${JSON.stringify(fixtureUrl)}))
+const result = await ocr(bytes)
+const document = await ocrDocument(bytes).catch(error => ({ kind: error.kind }))
+parentPort.postMessage([result.text.includes('Hello World'), document.schema ?? document.kind, servicePidForTesting() ?? null])
 `;
 		const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(source)}`));
 		const message = once(worker, 'message');
 		const exit = once(worker, 'exit');
 		try {
-			expect(await message).toStrictEqual([[true, null]]);
+			const [workerMessage] = await message as [[boolean, string, number | null]];
+			const [recognized, documentResult, servicePid] = workerMessage;
+			expect(recognized).toBe(true);
+			expect(['mac-ocr.document', 'unavailable']).toContain(documentResult);
+			expect(servicePid).toBeNull();
 			expect(await exit).toStrictEqual([0]);
 		} finally {
 			await worker.terminate();
