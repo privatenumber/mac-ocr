@@ -56,7 +56,7 @@ Run one suite: `swift test --no-parallel --filter SearchablePDFTests`
 
 **Schema snapshots:** the JSON/JSONL output schema and the fd-3 error envelope are pinned by golden files (`Tests/mac-ocrTests/Snapshots/`). A deliberate schema change regenerates them with `MAC_OCR_UPDATE_SNAPSHOTS=1 swift test --no-parallel --filter SchemaSnapshotTests` — the golden diff in review *is* the schema change. Remember the `BREAKING CHANGE:` footer.
 
-**Node API tests.** Main-thread `ocr()` uses `src/service/` and is covered by `Tests/specs/service/`. One-shot argument handling, environment forwarding, stream parsing, and exit classification are covered by scripted binaries in `Tests/specs/wrapper.ts`. `importWrapper` (`Tests/utils.ts`) copies `src/` into a temp fixture with a shim at `bin/mac-ocr`, so no Vision is involved.
+**Node API tests.** Main-thread shared-service and stream-protocol behavior is covered by `Tests/specs/service/`. One-shot argument handling, environment forwarding, worker behavior, and exit classification are covered by scripted binaries in `Tests/specs/wrapper.ts`. `importWrapper` (`Tests/utils.ts`) copies `src/` into a temp fixture with a shim at `bin/mac-ocr`, so no Vision is involved.
 
 ### Release build (universal binary)
 

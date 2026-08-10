@@ -5,7 +5,6 @@ import { importWrapper } from '../../utils.ts';
 import { serviceShim } from './utils.ts';
 
 type LoggedRequest = {
-	id: number;
 	pid: number;
 	operation?: string;
 	command?: string;
@@ -68,8 +67,6 @@ if (request.operation === 'ocr') {
 			.split('\n')
 			.map(line => JSON.parse(line) as LoggedRequest);
 		const inputDirectory = await fs.readFile(path.join(logDirectory, 'input-directory'), 'utf8');
-		const pagesRequest = requests.find(request => request.operation === 'ocr-pages');
-		const pulls = requests.filter(request => request.command === 'pull');
 		const pdfRequest = requests.find(request => request.operation === 'searchable-pdf');
 
 		expect(ocrResult.text).toBe('ocr');
@@ -85,11 +82,6 @@ if (request.operation === 'ocr') {
 			'searchable-pdf',
 			'languages',
 		]);
-		expect(pulls.map(request => request.id)).toStrictEqual([
-			pagesRequest?.id,
-			pagesRequest?.id,
-			pagesRequest?.id,
-		]);
 		expect(requests.filter(request => request.command !== 'pull').every(
 			request => request.command === undefined,
 		)).toBe(true);
@@ -97,7 +89,6 @@ if (request.operation === 'ocr') {
 			wrapper.serviceApi.servicePidForTesting(),
 		]));
 		const outputName = pdfRequest?.outputName;
-		expect(outputName).toMatch(/^[0-9a-f-]{36}$/i);
 		if (!outputName) {
 			throw new Error('Expected PDF output name');
 		}

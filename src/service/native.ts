@@ -38,7 +38,6 @@ export type NativeStream = AsyncIterable<OcrResult> & {
 type PendingBase = {
 	id: number;
 	operation: NativeOperation;
-	signal?: AbortSignal;
 	abortSubscription?: ReturnType<typeof addAbortListener>;
 	cancelGraceTimer?: NodeJS.Timeout;
 	cancelled: boolean;
@@ -460,7 +459,6 @@ const startNativeService = (
 				type: 'unary',
 				resolve,
 				reject,
-				signal,
 				cancelled: false,
 			});
 			return promise;
@@ -475,7 +473,6 @@ const startNativeService = (
 				completed: false,
 				resolveDone,
 				done,
-				signal,
 				cancelled: false,
 			};
 			if (pending) {

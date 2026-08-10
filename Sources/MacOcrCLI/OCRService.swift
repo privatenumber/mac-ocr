@@ -105,11 +105,14 @@ private actor ServiceCredits {
 	}
 
 	func wait() async throws {
+		guard !cancelled else {
+			throw CancellationError()
+		}
+		try Task.checkCancellation()
 		if available > 0 {
 			available -= 1
 			return
 		}
-		try Task.checkCancellation()
 		await withTaskCancellationHandler {
 			await withCheckedContinuation { continuation in
 				if cancelled {
@@ -120,6 +123,9 @@ private actor ServiceCredits {
 			}
 		} onCancel: {
 			Task { await self.cancel() }
+		}
+		guard !cancelled else {
+			throw CancellationError()
 		}
 		try Task.checkCancellation()
 	}
@@ -243,7 +249,9 @@ private func serviceResult(
 	pageIndex: Int,
 	options: OCROptions
 ) async throws -> ServiceResult {
+	try Task.checkCancellation()
 	let loaded = try loader.load(pageIndex)
+	try Task.checkCancellation()
 	let result = try await OCREngine.run(
 		session: VisionSession(image: loaded.image, orientation: loaded.orientation),
 		options: options
@@ -348,11 +356,13 @@ private func processServiceOcr(
 			regionOfInterest: try command.common.roi.map(parseRegionOfInterest),
 			maxCandidates: command.maxCandidates
 		)
+		try Task.checkCancellation()
 		let loader = try await openSource(
 			.file(inputPath),
 			pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
 			pdfPassword: request.password
 		)
+		try Task.checkCancellation()
 		guard loader.count == 1 else {
 			throw ServiceInputUsageError(
 				errorDescription: "Input has multiple pages. Use `ocr.pages()` to read them all."
@@ -386,11 +396,13 @@ private func processServicePages(
 			regionOfInterest: try command.common.roi.map(parseRegionOfInterest),
 			maxCandidates: command.maxCandidates
 		)
+		try Task.checkCancellation()
 		let loader = try await openSource(
 			.file(inputPath),
 			pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
 			pdfPassword: request.password
 		)
+		try Task.checkCancellation()
 		for pageIndex in 0..<loader.count {
 			try await credits.wait()
 			let result = try await serviceResult(loader: loader, pageIndex: pageIndex, options: options)
@@ -528,10 +540,10 @@ public enum OCRService {
 			switch request.command {
 			case .some("cancel"):
 				if activeRequest?.id == request.id {
+					activeRequest?.task.cancel()
 					if let credits = activeRequest?.credits {
 						await credits.cancel()
 					}
-					activeRequest?.task.cancel()
 				}
 			case .some("pull"):
 				if activeRequest?.id == request.id, let credits = activeRequest?.credits {
@@ -593,10 +605,10 @@ public enum OCRService {
 		}
 		if let activeRequest {
 			activeRequest.responseControl.suppress()
+			activeRequest.task.cancel()
 			if let credits = activeRequest.credits {
 				await credits.cancel()
 			}
-			activeRequest.task.cancel()
 			await activeRequest.task.value
 		}
 	}

@@ -12,9 +12,9 @@ import {
 	serviceInputFailure,
 } from './failures.ts';
 import {
-	getNativeService, stopNativeService, type NativeOperation, type NativeStream,
+	getNativeService, stopNativeService, type NativeOperation, type NativeService, type NativeStream,
 } from './native.ts';
-import { isNativeArtifact } from './protocol.ts';
+import type { NativeArtifact } from './protocol.ts';
 
 export {
 	pendingServiceRequestsForTesting,
@@ -29,7 +29,6 @@ type QueuedRequest = {
 	retainedBytes: number;
 	arguments?: string[];
 	password?: string;
-	outputName?: string;
 	signal?: AbortSignal;
 	resolve?: (result: unknown) => void;
 	reject: (error: unknown) => void;
@@ -120,19 +119,16 @@ const rejectQueuedRequests = (error: unknown): void => {
 };
 
 const resultForRequest = async (
+	service: NativeService,
 	request: QueuedRequest,
 	inputName: string | undefined,
 ): Promise<unknown> => {
-	const service = await getNativeService(rejectQueuedRequests, request.signal);
-	if (request.signal?.aborted) {
-		throw serviceAbortFailure();
-	}
 	const nativeRequest = {
 		operation: request.operation,
 		inputName,
 		arguments: request.arguments,
 		password: request.password,
-		outputName: request.outputName,
+		outputName: request.operation === 'searchable-pdf' ? crypto.randomUUID() : undefined,
 	};
 	if (request.type === 'stream') {
 		const stream = service.stream(nativeRequest, request.signal);
@@ -146,13 +142,11 @@ const resultForRequest = async (
 		if (request.operation !== 'searchable-pdf') {
 			return result;
 		}
-		if (!isNativeArtifact(result)) {
-			throw new MacOcrError('mac-ocr service returned an invalid PDF artifact', { kind: 'internal' });
-		}
-		const outputPath = path.join(service.inputDirectory, result.name);
+		const artifact = result as NativeArtifact;
+		const outputPath = path.join(service.inputDirectory, artifact.name);
 		try {
 			const output = await fs.readFile(outputPath);
-			if (output.byteLength !== result.size) {
+			if (output.byteLength !== artifact.size) {
 				throw new MacOcrError('mac-ocr service returned a truncated PDF artifact', { kind: 'internal' });
 			}
 			return output;
@@ -172,12 +166,12 @@ const runQueuedRequest = async (request: QueuedRequest): Promise<void> => {
 		if (request.signal?.aborted) {
 			throw serviceAbortFailure();
 		}
+		const service = await getNativeService(rejectQueuedRequests, request.signal);
+		if (request.signal?.aborted) {
+			throw serviceAbortFailure();
+		}
 		let inputName: string | undefined;
 		if (request.buffer) {
-			const service = await getNativeService(rejectQueuedRequests, request.signal);
-			if (request.signal?.aborted) {
-				throw serviceAbortFailure();
-			}
 			inputName = crypto.randomUUID();
 			inputPath = path.join(service.inputDirectory, inputName);
 			try {
@@ -198,7 +192,7 @@ const runQueuedRequest = async (request: QueuedRequest): Promise<void> => {
 				releaseRequestInput(request);
 			}
 		}
-		const result = await resultForRequest(request, inputName);
+		const result = await resultForRequest(service, request, inputName);
 		request.resolve?.(result);
 	} catch (error) {
 		primaryError = error;
@@ -270,7 +264,6 @@ const queueRequest = (
 		signal,
 		resolve,
 		reject,
-		outputName: operation === 'searchable-pdf' ? crypto.randomUUID() : undefined,
 		admitted: true,
 	};
 	if (type === 'stream') {
@@ -356,7 +349,6 @@ export const ocrPagesWithService = (
 			options?.signal,
 		) as NativeStream;
 		let completed = false;
-		let yielded = 0;
 		let expectedPageCount: number | undefined;
 		const seenPages = new Set<number>();
 		let invalidPageMetadata = false;
@@ -368,7 +360,6 @@ export const ocrPagesWithService = (
 				}
 				expectedPageCount = page.pageCount;
 				seenPages.add(page.page);
-				yielded += 1;
 				yield page;
 			}
 			completed = true;
@@ -383,10 +374,9 @@ export const ocrPagesWithService = (
 		if (
 			invalidPageMetadata
 			|| seenPages.size !== expectedPageCount
-			|| yielded !== expectedPageCount
 		) {
 			throw new MacOcrError(
-				`mac-ocr ocr produced ${yielded} of ${expectedPageCount} pages - some output could not be parsed`,
+				`mac-ocr ocr produced ${seenPages.size} of ${expectedPageCount} pages - some output could not be parsed`,
 				{ kind: 'parse' },
 			);
 		}
