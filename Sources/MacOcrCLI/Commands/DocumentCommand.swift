@@ -89,7 +89,7 @@ public struct DocumentCommand: AsyncParsableCommand {
 		reporter?.finish(outputPath: nil)
 	}
 
-	private func documentOptions() throws -> DocumentOptions {
+	func documentOptions() throws -> DocumentOptions {
 		try DocumentEngine.checkAvailability()
 		do {
 			return try DocumentEngine.prepare(

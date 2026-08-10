@@ -352,14 +352,14 @@ export const ocrDocumentPagesWithService = (
 	arguments_: string[],
 	password: string | undefined,
 	signal: AbortSignal | undefined,
-): Promise<NativeStream<OcrDocumentResult>> => queueRequest(
+): Promise<NativeStream> => queueRequest(
 	'stream',
 	'document-pages',
 	input,
 	arguments_,
 	password,
 	signal,
-) as Promise<NativeStream<OcrDocumentResult>>;
+) as Promise<NativeStream>;
 
 export const ocrPagesWithService = (
 	input: Input,
@@ -381,7 +381,7 @@ export const ocrPagesWithService = (
 			buildArgs(options),
 			options?.password || process.env.MAC_OCR_PDF_PASSWORD,
 			options?.signal,
-		) as NativeStream;
+		) as NativeStream & AsyncIterable<OcrResult>;
 		let completed = false;
 		let expectedPageCount: number | undefined;
 		const seenPages = new Set<number>();

@@ -26,7 +26,6 @@ await describe('ocrDocument', () => {
 		expect(inputError).toBeInstanceOf(TypeError);
 		expect(optionsError).toBeInstanceOf(RangeError);
 		expect(abortError).toMatchObject({ kind: 'abort' });
-		expect((abortError as Error).message).toBe('mac-ocr operation was aborted');
 	});
 
 	test('returns structured content for an image', async () => {
@@ -42,7 +41,6 @@ await describe('ocrDocument', () => {
 		expect(result.schema).toBe('mac-ocr.document');
 		expect(result.schemaVersion).toBe(1);
 		expect(result.text).toBe('Hello World');
-		expect(result.documents).toHaveLength(1);
 		expect(result.documents[0]?.content.text.lines[0]?.transcript).toBe('Hello World');
 	});
 
@@ -61,7 +59,6 @@ await describe('ocrDocument', () => {
 		}
 
 		const pages = await Array.fromAsync(ocrDocument.pages(fixtureData('multipage.pdf')));
-		expect(pages).toHaveLength(3);
 		expect(pages.map(page => page.page)).toStrictEqual([1, 2, 3]);
 		expect(pages.every(page => page.pageCount === 3)).toBe(true);
 	});

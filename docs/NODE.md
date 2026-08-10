@@ -189,38 +189,9 @@ type OcrDocumentResult = {
   text: string
   documents: RecognizedDocument[]
 }
-
-type RecognizedDocument = {
-  confidence: number
-  content: DocumentContainer
-}
-
-type DocumentContainer = {
-  boundingRegion: DocumentRegion
-  text: DocumentText
-  title?: DocumentText
-  paragraphs: DocumentText[]
-  tables: DocumentTable[]
-  lists: DocumentList[]
-}
-
-type DocumentTable = {
-  boundingRegion: DocumentRegion
-  rows: DocumentTableCell[][]
-}
-
-type DocumentList = {
-  boundingRegion: DocumentRegion
-  items: DocumentListItem[]
-}
-
-type DocumentRegion = {
-  points: { x: number; y: number }[]
-  boundingBox: BoundingBox
-}
 ```
 
-Document containers are recursive because table cells and list items can contain their own paragraphs, tables, lists, and text. Root `text` is the non-duplicated convenience transcript; structural views are not meant to be concatenated.
+The package exports the nested `RecognizedDocument`, `DocumentContainer`, `DocumentText`, `DocumentTable`, `DocumentTableCell`, `DocumentList`, `DocumentListItem`, `DocumentRegion`, and `DocumentIndexRange` types. Document containers are recursive because table cells and list items can contain their own paragraphs, tables, lists, and text. Root `text` is the non-duplicated convenience transcript; structural views are not meant to be concatenated.
 
 ## Errors
 
@@ -243,13 +214,13 @@ try {
 
 | `kind` | When |
 |---|---|
-| `usage` | Bad input/options (exit 64), or a multi-page PDF passed to `ocr()` (detected by the wrapper — `exitCode` is `null`) |
+| `usage` | Bad input/options (exit 64), or a multi-page PDF passed to `ocr()` or `ocrDocument()` (detected by the wrapper — `exitCode` is `null`) |
 | `unavailable` | A feature isn't available on this macOS version |
 | `runtime` | Recognition or I/O failure, queue capacity exceeded (`code: 'queue_capacity_exceeded'`), or the binary was killed by a signal that wasn't your `AbortSignal` |
 | `internal` | An unexpected CLI failure |
 | `abort` | Cancelled via your `AbortSignal` — never anything else |
 | `spawn` | The binary couldn't be started |
-| `parse` | The binary's output couldn't be parsed, or pages were missing — `ocr.pages()` verifies every page announced by `pageCount` actually arrived |
+| `parse` | The binary's output couldn't be parsed, or pages were missing — `ocr.pages()` and `ocrDocument.pages()` verify every page announced by `pageCount` actually arrived |
 
 ## Cancellation
 

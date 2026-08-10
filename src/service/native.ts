@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 import { parseOcrDocumentResult } from '../document-parser.ts';
 import { MacOcrError } from '../errors.ts';
 import { binaryPath } from '../process.ts';
-import type { OcrResult } from '../types.ts';
 import {
 	createFrameDecoder,
 	encodeFrame,
@@ -31,8 +30,7 @@ export type NativeRequest = {
 	outputName?: string;
 };
 
-export type NativeStream<Result = OcrResult> = AsyncIterable<Result> & {
-	next: () => Promise<IteratorResult<Result>>;
+export type NativeStream = AsyncIterable<unknown> & {
 	cancel: () => Promise<void>;
 	done: Promise<void>;
 };
@@ -68,10 +66,10 @@ export type NativeService = {
 	inputDirectory: string;
 	pendingRequests: () => number;
 	request: (request: NativeRequest, signal?: AbortSignal) => Promise<unknown>;
-	stream: <Result = OcrResult>(
+	stream: (
 		request: NativeRequest,
 		signal?: AbortSignal,
-	) => NativeStream<Result>;
+	) => NativeStream;
 	stop: (preserveQueuedRequests?: boolean) => void;
 };
 
@@ -485,7 +483,7 @@ const startNativeService = (
 			});
 			return promise;
 		},
-		stream: <Result>(request: NativeRequest, signal?: AbortSignal): NativeStream<Result> => {
+		stream: (request: NativeRequest, signal?: AbortSignal): NativeStream => {
 			const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
 			const stream: PendingStream = {
 				id: requestId(),
@@ -524,8 +522,7 @@ const startNativeService = (
 				return stream.next.promise;
 			};
 			return {
-				[Symbol.asyncIterator]: () => ({ next: next as () => Promise<IteratorResult<Result>> }),
-				next: next as () => Promise<IteratorResult<Result>>,
+				[Symbol.asyncIterator]: () => ({ next }),
 				cancel: async () => {
 					cancelPending(stream);
 					await stream.done;

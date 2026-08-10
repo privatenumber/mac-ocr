@@ -154,9 +154,9 @@ const pdf = await createSearchablePdf(bytes)                    // → Uint8Arra
 const langs = await supportedLanguages()                  // → string[] (ocr + createSearchablePdf)
 ```
 
-- `ocr()` throws if given a multi-page PDF — use `ocr.pages()`.
-- Main-thread `ocr()` calls run one at a time. Avoid an unbounded `Promise.all()` burst, and keep input bytes unchanged until each call settles.
-- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `ocrStrategy`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
+- `ocr()` and `ocrDocument()` throw for multi-page PDFs — use their respective `.pages()` iterators.
+- Main-thread calls run one at a time through the shared native service. Avoid an unbounded `Promise.all()` burst, and keep input bytes unchanged until each call settles.
+- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates`, `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `ocrStrategy`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal). `ocrDocument` does not accept `fast` or `confidence`.
 - Failures throw `MacOcrError` with `.kind` (`'usage'`, `'runtime'`, `'unavailable'`, …) and `.stderr`.
 
 ## Patterns

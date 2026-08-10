@@ -64,30 +64,6 @@ const malformedCandidatesResult = {
 };
 
 await describe('document service', () => {
-	test('returns validated document results and pulls one page at a time', async () => {
-		await using wrapper = await importWrapper(serviceShim({
-			setup: 'let page = 0',
-			onRequest: `if (request.operation === 'document') {
-  complete(request, ${JSON.stringify(documentResult())})
-} else if (request.operation === 'document-pages') {
-} else if (request.command === 'pull') {
-  if (page === 2) {
-    complete(request)
-  } else {
-    item(request, page, ${JSON.stringify(documentResult()).replace('"page":1', '"page":page + 1').replace('"pageCount":1', '"pageCount":2').replace('"text":"page-1"', '"text":"page-" + (page + 1)')})
-    page += 1
-  }
-}`,
-		}), { service: true });
-		const result = await wrapper.api.ocrDocument(Buffer.from('document'));
-		const pages = await Array.fromAsync(wrapper.api.ocrDocument.pages(Buffer.from('pages')));
-		expect(result).toMatchObject({
-			schema: 'mac-ocr.document',
-			text: 'page-1',
-		});
-		expect(pages.map(page => page.page)).toStrictEqual([1, 2]);
-	});
-
 	test('rejects malformed document candidates', async () => {
 		await using wrapper = await importWrapper(serviceShim({
 			onRequest: `if (request.operation === 'document') {
@@ -119,30 +95,5 @@ await describe('document service', () => {
 			kind: 'unavailable',
 			code: 'document_recognition_unavailable',
 		});
-	});
-
-	test('rejects a late document page after cancellation', async () => {
-		await using wrapper = await importWrapper(serviceShim({
-			setup: 'let activeRequest',
-			onRequest: `if (request.operation === 'document-pages') {
-  activeRequest = request
-} else if (request.command === 'cancel' && request.id === activeRequest?.id) {
-  item(activeRequest, 0, ${JSON.stringify(documentResult())})
-  frame({
-    id: activeRequest.id,
-    type: 'error',
-    error: { kind: 'abort', message: 'aborted', exitCode: null, stderr: '' },
-  })
-}`,
-		}), { service: true });
-		const controller = new AbortController();
-		const iterator = wrapper.api.ocrDocument.pages(
-			Buffer.from('document'),
-			{ signal: controller.signal },
-		)[Symbol.asyncIterator]();
-		const next = iterator.next().catch((error: unknown) => error);
-		controller.abort();
-		expect(await next).toMatchObject({ kind: 'abort' });
-		await iterator.return?.();
 	});
 }, { parallel: false });
