@@ -20,14 +20,83 @@ type NativeError = {
 	stderr: string;
 };
 
-export type NativeResponse = {
+export type NativeItem = {
 	id: number;
-	type: 'result';
-	result: OcrResult;
-} | {
+	type: 'item';
+	sequence: number;
+	result: unknown;
+};
+
+export type NativeComplete = {
+	id: number;
+	type: 'complete';
+	result?: unknown;
+};
+
+export type NativeErrorResponse = {
 	id: number;
 	type: 'error';
 	error: NativeError;
+};
+
+export type NativeResponse = NativeItem | NativeComplete | NativeErrorResponse;
+
+export type NativeArtifact = {
+	name: string;
+	size: number;
+};
+
+const requestIdIsValid = (value: unknown): value is number => (
+	typeof value === 'number'
+	&& Number.isInteger(value)
+	&& value >= 0
+	&& value <= 4_294_967_295
+);
+
+const isUuid = (value: unknown): value is string => (
+	typeof value === 'string' && /^[0-9A-F-]{36}$/i.test(value)
+);
+
+export const isNativeArtifact = (value: unknown): value is NativeArtifact => (
+	isRecord(value)
+	&& isUuid(value.name)
+	&& typeof value.size === 'number'
+	&& Number.isSafeInteger(value.size)
+	&& value.size > 0
+);
+
+export const isLanguageList = (value: unknown): value is string[] => (
+	Array.isArray(value) && value.every(language => typeof language === 'string')
+);
+
+export const isOcrResult = (value: unknown): value is OcrResult => (
+	isRecord(value)
+	&& typeof value.page === 'number'
+	&& Number.isInteger(value.page)
+	&& typeof value.pageCount === 'number'
+	&& Number.isInteger(value.pageCount)
+	&& typeof value.width === 'number'
+	&& Number.isInteger(value.width)
+	&& typeof value.height === 'number'
+	&& Number.isInteger(value.height)
+	&& typeof value.text === 'string'
+	&& Array.isArray(value.observations)
+);
+
+export const isNativeResponse = (value: unknown): value is NativeResponse => {
+	if (!isRecord(value) || !requestIdIsValid(value.id)) {
+		return false;
+	}
+	if (value.type === 'item') {
+		return typeof value.sequence === 'number'
+			&& Number.isSafeInteger(value.sequence)
+			&& value.sequence >= 0
+			&& Object.hasOwn(value, 'result');
+	}
+	if (value.type === 'complete') {
+		return true;
+	}
+	return value.type === 'error' && isNativeError(value.error);
 };
 
 const normalizeProtocolString = (_key: string, value: unknown): unknown => (
@@ -83,36 +152,6 @@ const isNativeError = (value: unknown): value is NativeError => (
 	)
 	&& typeof value.stderr === 'string'
 );
-
-const isOcrResult = (value: unknown): value is OcrResult => (
-	isRecord(value)
-	&& typeof value.page === 'number'
-	&& Number.isInteger(value.page)
-	&& typeof value.pageCount === 'number'
-	&& Number.isInteger(value.pageCount)
-	&& typeof value.width === 'number'
-	&& Number.isInteger(value.width)
-	&& typeof value.height === 'number'
-	&& Number.isInteger(value.height)
-	&& typeof value.text === 'string'
-	&& Array.isArray(value.observations)
-);
-
-export const isNativeResponse = (value: unknown): value is NativeResponse => {
-	if (
-		!isRecord(value)
-		|| typeof value.id !== 'number'
-		|| !Number.isInteger(value.id)
-		|| value.id < 0
-		|| value.id > 4_294_967_295
-	) {
-		return false;
-	}
-	return (
-		(value.type === 'result' && isOcrResult(value.result))
-		|| (value.type === 'error' && isNativeError(value.error))
-	);
-};
 
 export const createFrameDecoder = (
 	onFrame: (frame: Buffer) => boolean,

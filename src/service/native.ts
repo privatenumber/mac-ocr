@@ -5,45 +5,75 @@ import { MacOcrError } from '../errors.ts';
 import { binaryPath } from '../process.ts';
 import type { OcrResult } from '../types.ts';
 import {
+	createFrameDecoder,
+	encodeFrame,
+	isLanguageList,
+	isNativeArtifact,
+	isNativeHello,
+	isNativeResponse,
+	isOcrResult,
+	type NativeResponse,
+} from './protocol.ts';
+import {
 	serviceAbortFailure,
 	serviceFailure,
 	serviceSpawnFailure,
 } from './failures.ts';
-import {
-	createFrameDecoder,
-	encodeFrame,
-	isNativeHello,
-	isNativeResponse,
-	type NativeHello,
-	type NativeResponse,
-} from './protocol.ts';
 
-type PendingRequest = {
+export type NativeOperation = 'ocr' | 'ocr-pages' | 'searchable-pdf' | 'languages';
+
+export type NativeRequest = {
+	operation: NativeOperation;
+	inputName?: string;
+	arguments?: string[];
+	password?: string;
+	outputName?: string;
+};
+
+export type NativeStream = AsyncIterable<OcrResult> & {
+	cancel: () => Promise<void>;
+	done: Promise<void>;
+};
+
+type PendingBase = {
 	id: number;
-	resolve: (result: OcrResult) => void;
-	reject: (error: unknown) => void;
-	signal?: AbortSignal;
+	operation: NativeOperation;
 	abortSubscription?: ReturnType<typeof addAbortListener>;
 	cancelGraceTimer?: NodeJS.Timeout;
+	cancelled: boolean;
 };
+
+type PendingUnary = PendingBase & {
+	type: 'unary';
+	resolve: (result: unknown) => void;
+	reject: (error: unknown) => void;
+};
+
+type PendingStream = PendingBase & {
+	type: 'stream';
+	nextSequence: number;
+	next?: PromiseWithResolvers<IteratorResult<OcrResult>>;
+	completed: boolean;
+	error?: unknown;
+	resolveDone: () => void;
+	done: Promise<void>;
+};
+
+type PendingRequest = PendingUnary | PendingStream;
 
 export type NativeService = {
 	pid: number;
 	inputDirectory: string;
 	pendingRequests: () => number;
-	request: (
-		inputName: string,
-		arguments_: string[],
-		password?: string,
-		signal?: AbortSignal,
-	) => Promise<OcrResult>;
-	stop: () => void;
+	request: (request: NativeRequest, signal?: AbortSignal) => Promise<unknown>;
+	stream: (request: NativeRequest, signal?: AbortSignal) => NativeStream;
+	stop: (preserveQueuedRequests?: boolean) => void;
 };
 
 type ServiceState = {
 	promise?: Promise<NativeService>;
 	active?: NativeService;
-	stop?: () => void;
+	stop?: (preserveQueuedRequests?: boolean) => void;
 	startingPid?: number;
 };
 
@@ -61,6 +91,26 @@ const maxRetainedStderrBytes = 64 * 1024;
 // Callback identity prevents a stopped service from clearing its replacement.
 let serviceState: ServiceState | undefined;
 
+const responseError = (response: Extract<NativeResponse, { type: 'error' }>): MacOcrError => new MacOcrError(
+	response.error.message,
+	{
+		kind: response.error.kind,
+		code: response.error.code,
+		exitCode: response.error.exitCode,
+		stderr: response.error.stderr,
+	},
+);
+
+const isResultForOperation = (operation: NativeOperation, result: unknown): boolean => {
+	if (operation === 'ocr') {
+		return isOcrResult(result);
+	}
+	if (operation === 'searchable-pdf') {
+		return isNativeArtifact(result);
+	}
+	return operation === 'languages' && isLanguageList(result);
+};
+
 const startNativeService = (
 	state: ServiceState,
 	rejectQueuedRequests: RejectQueuedRequests,
@@ -72,8 +122,6 @@ const startNativeService = (
 	if (serviceState === state) {
 		state.startingPid = subprocess.pid;
 	}
-	// `close()` is the terminal transition: it settles active work and either
-	// rejects or preserves queued work based on the active request's abort state.
 	let pending: PendingRequest | undefined;
 	let retainedStderr = Buffer.alloc(0);
 	let nextRequestId = 0;
@@ -92,7 +140,6 @@ const startNativeService = (
 		(subprocess.stdout as typeof subprocess.stdout & { unref?: () => void }).unref?.();
 		(subprocess.stderr as typeof subprocess.stderr & { unref?: () => void }).unref?.();
 	};
-
 	const stderrText = (): string => retainedStderr.toString('utf8').trim();
 	const retainStderr = (chunk: Buffer): void => {
 		const retainedBytes = Math.min(
@@ -110,6 +157,14 @@ const startNativeService = (
 		startupAbortSubscription?.[Symbol.dispose]();
 		startupAbortSubscription = undefined;
 	};
+	const detachPendingCancellation = (request: PendingRequest): void => {
+		request.abortSubscription?.[Symbol.dispose]();
+		request.abortSubscription = undefined;
+		if (request.cancelGraceTimer) {
+			clearTimeout(request.cancelGraceTimer);
+			request.cancelGraceTimer = undefined;
+		}
+	};
 	const recordTransportError = (error: unknown): void => {
 		if (closed) {
 			return;
@@ -120,23 +175,88 @@ const startNativeService = (
 			forceExitTimer.unref();
 		}
 	};
-	const detachPendingCancellation = (request: PendingRequest): void => {
-		request.abortSubscription?.[Symbol.dispose]();
-		request.abortSubscription = undefined;
-		if (request.cancelGraceTimer) {
-			clearTimeout(request.cancelGraceTimer);
-			request.cancelGraceTimer = undefined;
+	const write = (value: unknown): void => {
+		subprocess.stdin.write(encodeFrame(value), (error) => {
+			if (error) {
+				recordTransportError(error);
+			}
+		});
+	};
+	const settleStream = (request: PendingStream, error?: unknown): void => {
+		if (pending === request) {
+			pending = undefined;
+		}
+		detachPendingCancellation(request);
+		subprocess.unref();
+		const terminalError = request.cancelled
+			? serviceAbortFailure(error instanceof MacOcrError ? error.stderr : stderrText())
+			: error;
+		request.completed = true;
+		request.error = terminalError;
+		if (request.next) {
+			const { next } = request;
+			request.next = undefined;
+			if (terminalError === undefined) {
+				next.resolve({
+					done: true,
+					value: undefined,
+				});
+			} else {
+				next.reject(terminalError);
+			}
+		}
+		request.resolveDone();
+	};
+	const settleUnary = (request: PendingUnary, error?: unknown, result?: unknown): void => {
+		if (pending === request) {
+			pending = undefined;
+		}
+		detachPendingCancellation(request);
+		subprocess.unref();
+		if (request.cancelled) {
+			request.reject(serviceAbortFailure(
+				error instanceof MacOcrError ? error.stderr : stderrText(),
+			));
+		} else if (error === undefined) {
+			request.resolve(result);
+		} else {
+			request.reject(error);
 		}
 	};
-	const rejectPending = (error: unknown): void => {
+	const settlePending = (error: unknown): void => {
 		if (!pending) {
 			return;
 		}
-		const request = pending;
-		pending = undefined;
-		detachPendingCancellation(request);
-		request.reject(error);
-		subprocess.unref();
+		if (pending.type === 'stream') {
+			settleStream(pending, pending.cancelled ? serviceAbortFailure(stderrText()) : error);
+			return;
+		}
+		settleUnary(pending, pending.cancelled ? serviceAbortFailure(stderrText()) : error);
+	};
+	const cancelPending = (request: PendingRequest): void => {
+		if (pending !== request || request.cancelGraceTimer) {
+			return;
+		}
+		request.cancelled = true;
+		request.cancelGraceTimer = setTimeout(() => {
+			if (pending !== request) {
+				return;
+			}
+			subprocess.stdin.destroy();
+			subprocess.stdout.destroy();
+			subprocess.stderr.destroy();
+			subprocess.kill('SIGKILL');
+			close();
+		}, cancellationGraceMilliseconds);
+		request.cancelGraceTimer.unref();
+		try {
+			write({
+				id: request.id,
+				command: 'cancel',
+			});
+		} catch (error) {
+			recordTransportError(error);
+		}
 	};
 	const close = (
 		error?: unknown,
@@ -153,7 +273,6 @@ const startNativeService = (
 			forceExitTimer = undefined;
 		}
 		if (service?.inputDirectory) {
-			// Swift owns normal cleanup; Node covers crashes before Swift's defer runs.
 			fs.rm(service.inputDirectory, {
 				recursive: true,
 				force: true,
@@ -171,10 +290,10 @@ const startNativeService = (
 		const failure = failureOverride ?? (didFailToSpawn
 			? serviceSpawnFailure(error, stderrText())
 			: serviceFailure(message, stderrText(), error ?? transportError, exitCode));
-		if (rejectQueueOnClose && !pending?.signal?.aborted) {
+		if (rejectQueueOnClose && !pending?.cancelled) {
 			rejectQueuedRequests(failure);
 		}
-		rejectPending(pending?.signal?.aborted ? serviceAbortFailure(stderrText()) : failure);
+		settlePending(failure);
 		if (!ready) {
 			_reject(failure);
 		}
@@ -191,7 +310,7 @@ const startNativeService = (
 		failureOverride = serviceFailure(message, stderrText(), error);
 		subprocess.kill('SIGKILL');
 	};
-	const handleHello = (hello: NativeHello): void => {
+	const handleHello = (hello: { inputDirectory: string }): void => {
 		ready = true;
 		detachStartupAbortListener();
 		service.inputDirectory = hello.inputDirectory;
@@ -201,7 +320,6 @@ const startNativeService = (
 		}
 		_resolve(service);
 		queueMicrotask(() => {
-			// Let the first Promise continuation submit work before handles unref.
 			if (!pending) {
 				unrefIdleHandles();
 			}
@@ -213,23 +331,50 @@ const startNativeService = (
 			failProtocol(`mac-ocr service returned unknown request ID ${response.id}`);
 			return false;
 		}
-		pending = undefined;
-		detachPendingCancellation(request);
-		subprocess.unref();
-		if (request.signal?.aborted) {
-			request.reject(serviceAbortFailure(response.type === 'error' ? response.error.stderr : ''));
+		if (response.type === 'error') {
+			const error = responseError(response);
+			if (request.type === 'stream') {
+				settleStream(request, request.cancelled ? serviceAbortFailure(error.stderr) : error);
+			} else {
+				settleUnary(request, error);
+			}
 			return true;
 		}
-		if (response.type === 'result') {
-			request.resolve(response.result);
+		if (response.type === 'item') {
+			if (request.type === 'stream' && request.cancelled) {
+				return true;
+			}
+			if (
+				request.type !== 'stream'
+				|| response.sequence !== request.nextSequence
+				|| !isOcrResult(response.result)
+				|| !request.next
+			) {
+				failProtocol(`mac-ocr service returned an invalid stream item for request ${response.id}`);
+				return false;
+			}
+			request.nextSequence += 1;
+			const { next } = request;
+			request.next = undefined;
+			next.resolve({
+				done: false,
+				value: response.result,
+			});
 			return true;
 		}
-		request.reject(new MacOcrError(response.error.message, {
-			kind: response.error.kind,
-			code: response.error.code,
-			exitCode: response.error.exitCode,
-			stderr: response.error.stderr,
-		}));
+		if (request.type === 'stream') {
+			if (response.result !== undefined && response.result !== null) {
+				failProtocol(`mac-ocr service completed stream request ${response.id} with a result`);
+				return false;
+			}
+			settleStream(request);
+			return true;
+		}
+		if (!isResultForOperation(request.operation, response.result)) {
+			failProtocol(`mac-ocr service returned an invalid result for request ${response.id}`);
+			return false;
+		}
+		settleUnary(request, undefined, response.result);
 		return true;
 	};
 	const handleFrame = (frame: Buffer): boolean => {
@@ -257,87 +402,122 @@ const startNativeService = (
 		}
 		return handleResponse(value) && !closed;
 	};
+	const requestId = (): number => {
+		const id = nextRequestId;
+		nextRequestId = nextRequestId === 4_294_967_295 ? 0 : nextRequestId + 1;
+		return id;
+	};
+	const submit = (
+		request: NativeRequest,
+		signal: AbortSignal | undefined,
+		pendingRequest: PendingRequest,
+	): void => {
+		pending = pendingRequest;
+		if (closed) {
+			settlePending(serviceFailure('mac-ocr service is not running', stderrText()));
+			return;
+		}
+		if (transportError) {
+			settlePending(serviceFailure('mac-ocr service transport failed', stderrText(), transportError));
+			return;
+		}
+		if (signal?.aborted) {
+			settlePending(serviceAbortFailure());
+			return;
+		}
+		if (signal) {
+			pendingRequest.abortSubscription = addAbortListener(
+				signal,
+				() => cancelPending(pendingRequest),
+			);
+		}
+		subprocess.ref();
+		try {
+			write({
+				id: pendingRequest.id,
+				operation: request.operation,
+				inputName: request.inputName,
+				arguments: request.arguments,
+				password: request.password,
+				outputName: request.outputName,
+			});
+		} catch (error) {
+			settlePending(error);
+		}
+	};
 	service = {
 		pid: subprocess.pid!,
 		inputDirectory: '',
 		pendingRequests: () => (pending ? 1 : 0),
-		request: (
-			inputName,
-			arguments_,
-			password,
-			signal,
-		) => new Promise<OcrResult>((resolve, reject) => {
-			if (closed) {
-				reject(serviceFailure('mac-ocr service is not running', stderrText()));
-				return;
-			}
-			if (transportError) {
-				reject(serviceFailure('mac-ocr service transport failed', stderrText(), transportError));
-				return;
-			}
-			if (signal?.aborted) {
-				reject(serviceAbortFailure());
-				return;
-			}
-			const id = nextRequestId;
-			nextRequestId = nextRequestId === 4_294_967_295 ? 0 : nextRequestId + 1;
+		request: (request, signal) => {
+			const { promise, resolve, reject } = Promise.withResolvers<unknown>();
 			if (pending) {
-				reject(new MacOcrError(
-					'mac-ocr service is already processing a request',
-					{ kind: 'internal' },
-				));
-				return;
+				reject(new MacOcrError('mac-ocr service is already processing a request', { kind: 'internal' }));
+				return promise;
 			}
-			const frame = encodeFrame({
+			const id = requestId();
+			submit(request, signal, {
 				id,
-				command: 'ocr',
-				inputName,
-				arguments: arguments_,
-				password,
-			});
-			pending = {
-				id,
+				operation: request.operation,
+				type: 'unary',
 				resolve,
 				reject,
-				signal,
-			};
-			if (signal) {
-				pending.abortSubscription = addAbortListener(signal, () => {
-					const request = pending;
-					if (request?.id !== id) {
-						return;
-					}
-					request.cancelGraceTimer = setTimeout(() => {
-						if (pending !== request) {
-							return;
-						}
-						subprocess.stdin.destroy();
-						subprocess.stdout.destroy();
-						subprocess.stderr.destroy();
-						subprocess.kill('SIGKILL');
-						close();
-					}, cancellationGraceMilliseconds);
-					request.cancelGraceTimer.unref();
-					const cancelFrame = encodeFrame({
-						id,
-						command: 'cancel',
-					});
-					subprocess.stdin.write(cancelFrame, (error) => {
-						if (error) {
-							recordTransportError(error);
-						}
-					});
-				});
-			}
-			// The child alone keeps Node alive while this request is active.
-			subprocess.ref();
-			subprocess.stdin.write(frame, (error) => {
-				if (error) {
-					recordTransportError(error);
-				}
+				cancelled: false,
 			});
-		}),
-		stop: () => {
+			return promise;
+		},
+		stream: (request, signal) => {
+			const { promise: done, resolve: resolveDone } = Promise.withResolvers<void>();
+			const stream: PendingStream = {
+				id: requestId(),
+				operation: request.operation,
+				type: 'stream',
+				nextSequence: 0,
+				completed: false,
+				resolveDone,
+				done,
+				cancelled: false,
+			};
+			if (pending) {
+				stream.completed = true;
+				stream.error = new MacOcrError('mac-ocr service is already processing a request', { kind: 'internal' });
+				stream.resolveDone();
+			} else {
+				submit(request, signal, stream);
+			}
+			const next = (): Promise<IteratorResult<OcrResult>> => {
+				if (stream.completed) {
+					return stream.error === undefined
+						? Promise.resolve({
+							done: true,
+							value: undefined,
+						})
+						: Promise.reject(stream.error);
+				}
+				if (stream.next) {
+					return Promise.reject(new MacOcrError('mac-ocr stream already has a pending next() call', { kind: 'internal' }));
+				}
+				stream.next = Promise.withResolvers<IteratorResult<OcrResult>>();
+				write({
+					id: stream.id,
+					command: 'pull',
+				});
+				return stream.next.promise;
+			};
+			return {
+				[Symbol.asyncIterator]: () => ({ next }),
+				next,
+				cancel: async () => {
+					cancelPending(stream);
+					await stream.done;
+				},
+				done,
+			};
+		},
+		stop: (preserveQueuedRequests = false) => {
+			if (preserveQueuedRequests) {
+				rejectQueueOnClose = false;
+			}
 			subprocess.stdin.destroy();
 			subprocess.stdout.destroy();
 			subprocess.kill();
@@ -390,10 +570,10 @@ export const getNativeService = (
 	return serviceState.promise!;
 };
 
-export const stopNativeService = (): void => {
+export const stopNativeService = (preserveQueuedRequests = false): void => {
 	const state = serviceState;
 	serviceState = undefined;
-	state?.stop?.();
+	state?.stop?.(preserveQueuedRequests);
 };
 
 export const servicePidForTesting = (): number | undefined => serviceState?.active?.pid;

@@ -56,7 +56,7 @@ Run one suite: `swift test --no-parallel --filter SearchablePDFTests`
 
 **Schema snapshots:** the JSON/JSONL output schema and the fd-3 error envelope are pinned by golden files (`Tests/mac-ocrTests/Snapshots/`). A deliberate schema change regenerates them with `MAC_OCR_UPDATE_SNAPSHOTS=1 swift test --no-parallel --filter SchemaSnapshotTests` — the golden diff in review *is* the schema change. Remember the `BREAKING CHANGE:` footer.
 
-**Node API tests.** Main-thread `ocr()` uses `src/service/` and is covered by `Tests/specs/service/`. One-shot argument handling, environment forwarding, stream parsing, and exit classification are covered by scripted binaries in `Tests/specs/wrapper.ts`. `importWrapper` (`Tests/utils.ts`) copies `src/` into a temp fixture with a shim at `bin/mac-ocr`, so no Vision is involved.
+**Node API tests.** Main-thread shared-service and stream-protocol behavior is covered by `Tests/specs/service/`. One-shot argument handling, environment forwarding, worker behavior, and exit classification are covered by scripted binaries in `Tests/specs/wrapper.ts`. `importWrapper` (`Tests/utils.ts`) copies `src/` into a temp fixture with a shim at `bin/mac-ocr`, so no Vision is involved.
 
 ### Release build (universal binary)
 
@@ -100,7 +100,7 @@ skills/                    # agent skill (shipped to npm via skills-npm)
 - **Serialized Vision.** All recognition routes through the `VisionRuntime` actor (`OCREngine.run`). Its closure is deliberately synchronous — see the warning on `VisionRuntime` before changing this.
 - **One runner.** `BatchRunner` owns source opening, PDF page iteration, serial execution, and fail-soft error aggregation (`ErrorSink`); the per-page operation and the output shape (`OutputStrategy`) are injected. `searchable-pdf` drives `SearchablePDF.render(...)` directly because its output is one binary PDF per input rather than per-page analysis.
 - **Three commands.** `RootCommand` registers `OCRCommand` (default — `mac-ocr photo.png` just works), `SearchablePDFCommand`, and `LanguagesCommand`. Shared recognition flags live in the `RecognitionOptions` option group so the commands cannot drift.
-- **Node API.** `src/ocr.ts` routes main-thread `ocr()` through `src/service/`; worker-thread calls and the other APIs use the one-shot process path. One-shot calls use JSONL output and fd-3 error envelopes. The service owns its framed protocol, FIFO staging queue, cancellation watchdog, and cleanup. Passwords never enter `argv`: service calls use framed requests, while one-shot calls use `MAC_OCR_PDF_PASSWORD`. The executable's `--service` switch is internal: `main.swift` handles it before ArgumentParser, so it stays out of public help and shell completions.
+- **Node API.** Main-thread `ocr()`, `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` calls share `src/service/`; workers use the one-shot process path. One-shot calls use JSONL output and fd-3 error envelopes. The service owns its framed protocol, FIFO staging queue, cancellation watchdog, and cleanup; page streams use pull-controlled items and PDFs return a private temporary artifact. Passwords never enter `argv`: service calls use framed requests, while one-shot calls use `MAC_OCR_PDF_PASSWORD`. The executable's `--service` switch is internal: `main.swift` handles it before ArgumentParser, so it stays out of public help and shell completions.
 
 ## CI/CD
 

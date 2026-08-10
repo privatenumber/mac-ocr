@@ -96,13 +96,9 @@ process.on('exit', () => fs.rmSync(directory, { recursive: true, force: true }))
 const firstStart = !fs.existsSync(marker)
 fs.writeFileSync(marker, '')`,
 			afterHello: 'if (firstStart) fs.rmSync(directory, { recursive: true, force: true })',
-			onRequest: `if (request.command === 'ocr') {
-  frame({
-    id: request.id,
-    type: 'result',
-    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'recovered', observations: [] },
-  })
-}`,
+			onRequest: `if (request.operation === 'ocr') {
+			  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'recovered', observations: [] })
+			}`,
 		}), { service: true });
 		const first = await wrapper.api.ocr(Buffer.from('first')).catch((error: unknown) => error);
 		expect(first).toMatchObject({ kind: 'runtime' });
@@ -116,12 +112,8 @@ fs.writeFileSync(marker, '')`,
 const replacement = fs.existsSync(marker)
 fs.writeFileSync(marker, '')`,
 			onRequest: `if (replacement) {
-  frame({
-    id: request.id,
-    type: 'result',
-    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'recovered', observations: [] },
-  })
-} else {
+			  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'recovered', observations: [] })
+			} else {
   fs.rmSync(directory, { recursive: true, force: true })
   frame({
     id: request.id,
@@ -131,6 +123,30 @@ fs.writeFileSync(marker, '')`,
 }`,
 		}), { service: true });
 		const first = await wrapper.api.ocr(Buffer.from('first')).catch((error: unknown) => error);
+		expect(first).toMatchObject({ kind: 'runtime' });
+		const second = await wrapper.api.ocr(Buffer.from('second'));
+		expect(second).toMatchObject({ text: 'recovered' });
+	});
+
+	test('restarts after losing the service input directory during a page stream', async () => {
+		await using wrapper = await importWrapper(serviceShim({
+			setup: `const marker = path.join(__dirname, '.started')
+const replacement = fs.existsSync(marker)
+fs.writeFileSync(marker, '')`,
+			onRequest: `if (replacement && request.operation === 'ocr') {
+  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'recovered', observations: [] })
+} else if (request.operation === 'ocr-pages') {
+  fs.rmSync(directory, { recursive: true, force: true })
+  frame({
+    id: request.id,
+    type: 'error',
+    error: { kind: 'runtime', message: 'directory lost', exitCode: 1, stderr: '' },
+  })
+}`,
+		}), { service: true });
+		const first = await Array.fromAsync(
+			wrapper.api.ocr.pages(Buffer.from('first')),
+		).catch((error: unknown) => error);
 		expect(first).toMatchObject({ kind: 'runtime' });
 		const second = await wrapper.api.ocr(Buffer.from('second'));
 		expect(second).toMatchObject({ text: 'recovered' });

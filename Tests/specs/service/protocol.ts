@@ -64,8 +64,8 @@ const payload = value => {
   return Buffer.concat([header, json])
 }
 process.stdout.write(Buffer.concat([
-  payload({ id: request.id + 1, type: 'result', result }),
-  payload({ id: request.id, type: 'result', result }),
+  payload({ id: request.id + 1, type: 'complete', result }),
+  payload({ id: request.id, type: 'complete', result }),
 ]))`,
 		}), { service: true });
 		const outcome = await wrapper.api.ocr(Buffer.from('x')).catch((error: unknown) => error);
@@ -82,11 +82,7 @@ process.stderr.write(diagnostic, () => {
   if (requestCount === 5) {
     process.exit(1)
   }
-  frame({
-    id: request.id,
-    type: 'result',
-    result: { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] },
-  })
+  complete(request, { page: 1, pageCount: 1, width: 1, height: 1, text: 'ok', observations: [] })
 })`,
 		}), { service: true });
 		for (let index = 0; index < 4; index += 1) {

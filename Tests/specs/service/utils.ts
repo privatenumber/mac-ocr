@@ -29,6 +29,15 @@ const frame = value => {
   header.writeUInt32LE(payload.length)
   process.stdout.write(Buffer.concat([header, payload]))
 }
+const item = (request, sequence, result) => frame({
+  id: request.id,
+  type: 'item',
+  sequence,
+  result,
+})
+const complete = (request, result) => frame(result === undefined
+  ? { id: request.id, type: 'complete' }
+  : { id: request.id, type: 'complete', result })
 ${setup}
 frame({ type: 'hello', inputDirectory: directory })
 ${afterHello}

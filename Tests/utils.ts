@@ -4,6 +4,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createFixture } from 'fs-fixture';
 import type * as WrapperApiModule from '../src/index.ts';
 import type * as OcrModule from '../src/ocr.ts';
+import type * as SearchablePdfModule from '../src/searchable-pdf.ts';
+import type * as LanguagesModule from '../src/languages.ts';
 import type * as ServiceModule from '../src/service/index.ts';
 
 export const fixtureData = (name: string): Buffer => fs.readFileSync(
@@ -49,9 +51,17 @@ export const importWrapper = async (
 	if (shim !== undefined) {
 		await fs.promises.chmod(fixture.getPath('bin/mac-ocr'), 0o755);
 	}
-	const [apiModule, ocrModule, serviceApi] = await Promise.all([
+	const [
+		apiModule,
+		ocrModule,
+		searchablePdfModule,
+		languagesModule,
+		serviceApi,
+	] = await Promise.all([
 		import(pathToFileURL(fixture.getPath('src/index.ts')).href) as Promise<WrapperApi>,
 		import(pathToFileURL(fixture.getPath('src/ocr.ts')).href) as Promise<typeof OcrModule>,
+		import(pathToFileURL(fixture.getPath('src/searchable-pdf.ts')).href) as Promise<typeof SearchablePdfModule>,
+		import(pathToFileURL(fixture.getPath('src/languages.ts')).href) as Promise<typeof LanguagesModule>,
 		import(pathToFileURL(fixture.getPath('src/service/index.ts')).href) as Promise<ServiceApi>,
 	]);
 	const api: WrapperApi = options.service
@@ -59,8 +69,10 @@ export const importWrapper = async (
 		: {
 			...apiModule,
 			ocr: Object.assign(ocrModule.ocrSingleProcess, {
-				pages: apiModule.ocr.pages,
+				pages: ocrModule.ocrPagesSingleProcess,
 			}) as OneShotOcr,
+			createSearchablePdf: searchablePdfModule.createSearchablePdfSingleProcess,
+			supportedLanguages: languagesModule.supportedLanguagesSingleProcess,
 		};
 	return {
 		api,

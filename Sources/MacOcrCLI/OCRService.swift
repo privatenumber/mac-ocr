@@ -17,10 +17,12 @@ private struct ServiceHello: Encodable {
 
 private struct ServiceRequest: Decodable, Sendable {
 	let id: UInt32
-	let command: String
+	let operation: String?
+	let command: String?
 	let inputName: String?
 	let arguments: [String]?
 	let password: String?
+	let outputName: String?
 }
 
 private struct ServiceError: Encodable {
@@ -44,11 +46,28 @@ private struct ServiceResult: Encodable {
 	let observations: [Observation]
 }
 
-private struct ServiceResponse: Encodable {
+private struct ServiceArtifact: Encodable {
+	let name: String
+	let size: Int
+}
+
+private struct ServiceItem<Result: Encodable>: Encodable {
 	let id: UInt32
-	let type: String
-	let result: ServiceResult?
-	let error: ServiceError?
+	let type = "item"
+	let sequence: Int
+	let result: Result
+}
+
+private struct ServiceComplete<Result: Encodable>: Encodable {
+	let id: UInt32
+	let type = "complete"
+	let result: Result?
+}
+
+private struct ServiceErrorResponse: Encodable {
+	let id: UInt32
+	let type = "error"
+	let error: ServiceError
 }
 
 private final class ServiceResponseControl: @unchecked Sendable {
@@ -61,12 +80,60 @@ private final class ServiceResponseControl: @unchecked Sendable {
 		}
 	}
 
-	func write(_ response: ServiceResponse) throws {
+	func write<Value: Encodable>(_ response: Value) throws {
 		try lock.withLock {
 			if enabled {
 				try writeServiceFrame(response)
 			}
 		}
+	}
+}
+
+private actor ServiceCredits {
+	private var available = 0
+	private var waiter: CheckedContinuation<Void, Never>?
+	private var cancelled = false
+
+	func pull() {
+		guard !cancelled else { return }
+		if let waiter {
+			self.waiter = nil
+			waiter.resume()
+			return
+		}
+		available += 1
+	}
+
+	func wait() async throws {
+		guard !cancelled else {
+			throw CancellationError()
+		}
+		try Task.checkCancellation()
+		if available > 0 {
+			available -= 1
+			return
+		}
+		await withTaskCancellationHandler {
+			await withCheckedContinuation { continuation in
+				if cancelled {
+					continuation.resume()
+					return
+				}
+				waiter = continuation
+			}
+		} onCancel: {
+			Task { await self.cancel() }
+		}
+		guard !cancelled else {
+			throw CancellationError()
+		}
+		try Task.checkCancellation()
+	}
+
+	func cancel() {
+		cancelled = true
+		waiter?.resume()
+		waiter = nil
 	}
 }
 
@@ -170,42 +237,28 @@ private func serviceInputPath(request: ServiceRequest, inputDirectory: URL) thro
 	return inputDirectory.appendingPathComponent(inputName, isDirectory: false).path
 }
 
+private func serviceOutputPath(request: ServiceRequest, inputDirectory: URL) throws -> String {
+	guard let outputName = request.outputName, UUID(uuidString: outputName) != nil else {
+		throw UsageError("Invalid service output name")
+	}
+	return inputDirectory.appendingPathComponent(outputName, isDirectory: false).path
+}
+
 private func serviceResult(
-	request: ServiceRequest,
-	inputDirectory: URL
+	loader: ImageLoader,
+	pageIndex: Int,
+	options: OCROptions
 ) async throws -> ServiceResult {
-	guard let arguments = request.arguments else {
-		throw UsageError("Missing service request arguments")
-	}
 	try Task.checkCancellation()
-	let inputPath = try serviceInputPath(request: request, inputDirectory: inputDirectory)
-	defer { try? FileManager.default.removeItem(atPath: inputPath) }
-	let command = try OCRCommand.parse(arguments + [inputPath])
-	let options = try command.recognition.buildOCROptions(
-		regionOfInterest: try command.common.roi.map(parseRegionOfInterest),
-		maxCandidates: command.maxCandidates
-	)
-	try Task.checkCancellation()
-	let loader = try await openSource(
-		.file(inputPath),
-		pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
-		pdfPassword: request.password
-	)
-	try Task.checkCancellation()
-	guard loader.count == 1 else {
-		throw ServiceInputUsageError(
-			errorDescription: "Input has multiple pages. Use `ocr.pages()` to read them all."
-		)
-	}
-	let loaded = try loader.load(0)
+	let loaded = try loader.load(pageIndex)
 	try Task.checkCancellation()
 	let result = try await OCREngine.run(
 		session: VisionSession(image: loaded.image, orientation: loaded.orientation),
 		options: options
 	)
 	return ServiceResult(
-		page: 1,
-		pageCount: 1,
+		page: pageIndex + 1,
+		pageCount: loader.count,
 		width: loaded.displayWidth,
 		height: loaded.displayHeight,
 		text: result.text,
@@ -213,11 +266,22 @@ private func serviceResult(
 	)
 }
 
-private func serviceUsageError(_ errorMessage: String) -> ServiceError {
+private func serviceOcrCommand(request: ServiceRequest, inputPath: String) throws -> OCRCommand {
+	guard let arguments = request.arguments else {
+		throw UsageError("Missing service request arguments")
+	}
+	return try OCRCommand.parse(arguments + [inputPath])
+}
+
+private func serviceUsageError(
+	_ errorMessage: String,
+	command: ParsableCommand.Type
+) -> ServiceError {
+	let commandName = command.configuration.commandName ?? "mac-ocr"
 	let message = """
 		\(errorMessage)
-		Usage: \(MacOcr.usageString(for: OCRCommand.self))
-		  See 'mac-ocr ocr --help' for more information.
+		Usage: \(MacOcr.usageString(for: command))
+		  See 'mac-ocr \(commandName) --help' for more information.
 		"""
 	return ServiceError(
 		kind: "usage",
@@ -228,21 +292,26 @@ private func serviceUsageError(_ errorMessage: String) -> ServiceError {
 	)
 }
 
-private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
+private func serviceError(
+	_ error: Error,
+	inputPath: String?,
+	command: ParsableCommand.Type
+) -> ServiceError {
+	let commandName = command.configuration.commandName ?? "mac-ocr"
 	if error is CancellationError {
 		return ServiceError(
 			kind: "abort",
 			code: nil,
-			message: "mac-ocr ocr was aborted",
+			message: "mac-ocr \(commandName) was aborted",
 			exitCode: nil,
 			stderr: ""
 		)
 	}
 	if let error = error as? ValidationError {
-		return serviceUsageError(error.message)
+		return serviceUsageError(error.message, command: command)
 	}
 	if let error = error as? UsageError {
-		return serviceUsageError(error.message)
+		return serviceUsageError(error.message, command: command)
 	}
 	if let error = error as? ServiceInputUsageError {
 		let message = error.localizedDescription
@@ -256,7 +325,7 @@ private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
 	}
 	let argumentParserExitCode = MacOcr.exitCode(for: error)
 	if argumentParserExitCode == .validationFailure {
-		return serviceUsageError(MacOcr.message(for: error))
+		return serviceUsageError(MacOcr.message(for: error), command: command)
 	}
 	let message =
 		inputPath.map {
@@ -271,33 +340,161 @@ private func serviceError(_ error: Error, inputPath: String?) -> ServiceError {
 	)
 }
 
-private func processServiceRequest(
+private func processServiceOcr(
 	request: ServiceRequest,
 	inputDirectory: URL,
 	responseControl: ServiceResponseControl
 ) async throws {
 	let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
-	let response: ServiceResponse
 	do {
-		let result = try await serviceResult(
-			request: request,
-			inputDirectory: inputDirectory
+		guard let inputPath else {
+			throw UsageError("Invalid service input name")
+		}
+		defer { try? FileManager.default.removeItem(atPath: inputPath) }
+		let command = try serviceOcrCommand(request: request, inputPath: inputPath)
+		let options = try command.recognition.buildOCROptions(
+			regionOfInterest: try command.common.roi.map(parseRegionOfInterest),
+			maxCandidates: command.maxCandidates
 		)
-		response = ServiceResponse(
-			id: request.id,
-			type: "result",
-			result: result,
-			error: nil
+		try Task.checkCancellation()
+		let loader = try await openSource(
+			.file(inputPath),
+			pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
+			pdfPassword: request.password
 		)
+		try Task.checkCancellation()
+		guard loader.count == 1 else {
+			throw ServiceInputUsageError(
+				errorDescription: "Input has multiple pages. Use `ocr.pages()` to read them all."
+			)
+		}
+		let result = try await serviceResult(loader: loader, pageIndex: 0, options: options)
+		try responseControl.write(ServiceComplete(id: request.id, result: result))
 	} catch {
-		response = ServiceResponse(
-			id: request.id,
-			type: "error",
-			result: nil,
-			error: serviceError(error, inputPath: inputPath)
-		)
+		try responseControl.write(
+			ServiceErrorResponse(
+				id: request.id,
+				error: serviceError(error, inputPath: inputPath, command: OCRCommand.self)
+			))
 	}
-	try responseControl.write(response)
+}
+
+private func processServicePages(
+	request: ServiceRequest,
+	inputDirectory: URL,
+	responseControl: ServiceResponseControl,
+	credits: ServiceCredits
+) async throws {
+	let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
+	do {
+		guard let inputPath else {
+			throw UsageError("Invalid service input name")
+		}
+		defer { try? FileManager.default.removeItem(atPath: inputPath) }
+		let command = try serviceOcrCommand(request: request, inputPath: inputPath)
+		let options = try command.recognition.buildOCROptions(
+			regionOfInterest: try command.common.roi.map(parseRegionOfInterest),
+			maxCandidates: command.maxCandidates
+		)
+		try Task.checkCancellation()
+		let loader = try await openSource(
+			.file(inputPath),
+			pdfDpi: resolvedPdfDpi(command.common.pdfDpi),
+			pdfPassword: request.password
+		)
+		try Task.checkCancellation()
+		for pageIndex in 0..<loader.count {
+			try await credits.wait()
+			let result = try await serviceResult(loader: loader, pageIndex: pageIndex, options: options)
+			try responseControl.write(
+				ServiceItem(
+					id: request.id,
+					sequence: pageIndex,
+					result: result
+				))
+		}
+		try responseControl.write(ServiceComplete<ServiceResult>(id: request.id, result: nil))
+	} catch {
+		try responseControl.write(
+			ServiceErrorResponse(
+				id: request.id,
+				error: serviceError(error, inputPath: inputPath, command: OCRCommand.self)
+			))
+	}
+}
+
+private func processSearchablePDF(
+	request: ServiceRequest,
+	inputDirectory: URL,
+	responseControl: ServiceResponseControl
+) async throws {
+	let inputPath = try? serviceInputPath(request: request, inputDirectory: inputDirectory)
+	let outputPath = try? serviceOutputPath(request: request, inputDirectory: inputDirectory)
+	do {
+		guard let inputPath, let outputPath, let outputName = request.outputName else {
+			throw UsageError("Invalid service input or output name")
+		}
+		defer { try? FileManager.default.removeItem(atPath: inputPath) }
+		var completed = false
+		defer {
+			if !completed {
+				try? FileManager.default.removeItem(atPath: outputPath)
+			}
+		}
+		guard let arguments = request.arguments else {
+			throw UsageError("Missing service request arguments")
+		}
+		let command = try SearchablePDFCommand.parse(arguments + [inputPath, "-o", outputPath])
+		let options = try command.recognition.buildOCROptions(
+			regionOfInterest: try command.roi.map(parseRegionOfInterest)
+		)
+		try Task.checkCancellation()
+		let data = try await SearchablePDF.render(
+			source: .file(inputPath),
+			options: options,
+			pdfDpi: MacOcrCLI.resolvedPdfDpi(command.pdfDpi),
+			password: request.password,
+			ocrAllPages: command.ocrAllPages,
+			imageQuality: command.imageQuality,
+			imagePageDpi: command.imagePageDpi,
+			imageDownsampleDpi: command.imageDownsampleDpi,
+			ocrStrategy: command.ocrStrategy
+		)
+		try Task.checkCancellation()
+		try data.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+		completed = true
+		try responseControl.write(
+			ServiceComplete(
+				id: request.id,
+				result: ServiceArtifact(name: outputName, size: data.count)
+			))
+	} catch {
+		try responseControl.write(
+			ServiceErrorResponse(
+				id: request.id,
+				error: serviceError(error, inputPath: inputPath, command: SearchablePDFCommand.self)
+			))
+	}
+}
+
+private func processLanguages(
+	request: ServiceRequest,
+	responseControl: ServiceResponseControl
+) throws {
+	do {
+		let command = try LanguagesCommand.parse(request.arguments ?? [])
+		try responseControl.write(
+			ServiceComplete(
+				id: request.id,
+				result: supportedLanguages(fast: command.fast)
+			))
+	} catch {
+		try responseControl.write(
+			ServiceErrorResponse(
+				id: request.id,
+				error: serviceError(error, inputPath: nil, command: LanguagesCommand.self)
+			))
+	}
 }
 
 private func terminateService(_ error: Error) -> Never {
@@ -335,27 +532,63 @@ public enum OCRService {
 			(
 				id: UInt32,
 				task: Task<Void, Never>,
-				responseControl: ServiceResponseControl
+				responseControl: ServiceResponseControl,
+				credits: ServiceCredits?
 			)?
 		while let frame = try readServiceFrame() {
 			let request = try decoder.decode(ServiceRequest.self, from: frame)
 			switch request.command {
-			case "cancel":
+			case .some("cancel"):
 				if activeRequest?.id == request.id {
 					activeRequest?.task.cancel()
+					if let credits = activeRequest?.credits {
+						await credits.cancel()
+					}
 				}
-			case "ocr":
-				if let activeRequest {
-					await activeRequest.task.value
+			case .some("pull"):
+				if activeRequest?.id == request.id, let credits = activeRequest?.credits {
+					await credits.pull()
+				}
+			case nil:
+				guard let operation = request.operation else {
+					throw UsageError("Missing service operation")
+				}
+				if let previousRequest = activeRequest {
+					await previousRequest.task.value
+					activeRequest = nil
 				}
 				let responseControl = ServiceResponseControl()
+				let credits = operation == "ocr-pages" ? ServiceCredits() : nil
 				let task = Task {
 					do {
-						try await processServiceRequest(
-							request: request,
-							inputDirectory: inputDirectory,
-							responseControl: responseControl
-						)
+						switch operation {
+						case "ocr":
+							try await processServiceOcr(
+								request: request,
+								inputDirectory: inputDirectory,
+								responseControl: responseControl
+							)
+						case "ocr-pages":
+							guard let credits else {
+								throw MessageError("Missing service page credits")
+							}
+							try await processServicePages(
+								request: request,
+								inputDirectory: inputDirectory,
+								responseControl: responseControl,
+								credits: credits
+							)
+						case "searchable-pdf":
+							try await processSearchablePDF(
+								request: request,
+								inputDirectory: inputDirectory,
+								responseControl: responseControl
+							)
+						case "languages":
+							try processLanguages(request: request, responseControl: responseControl)
+						default:
+							throw UsageError("Unsupported service operation: \(operation)")
+						}
 					} catch {
 						terminateService(error)
 					}
@@ -363,15 +596,19 @@ public enum OCRService {
 				activeRequest = (
 					id: request.id,
 					task: task,
-					responseControl: responseControl
+					responseControl: responseControl,
+					credits: credits
 				)
-			default:
-				throw UsageError("Unsupported service command: \(request.command)")
+			case .some(let command):
+				throw UsageError("Unsupported service command: \(command)")
 			}
 		}
 		if let activeRequest {
 			activeRequest.responseControl.suppress()
 			activeRequest.task.cancel()
+			if let credits = activeRequest.credits {
+				await credits.cancel()
+			}
 			await activeRequest.task.value
 		}
 	}
