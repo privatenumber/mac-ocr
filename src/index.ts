@@ -21,8 +21,6 @@
 
 export { ocr } from './ocr.ts';
 export type { OcrPages } from './ocr.ts';
-export { ocrDocument } from './document.ts';
-export type { OcrDocumentPages } from './document.ts';
 export { createSearchablePdf } from './searchable-pdf.ts';
 export { supportedLanguages } from './languages.ts';
 
@@ -38,17 +36,5 @@ export type {
 	RegionOfInterest,
 	CommonOptions,
 	OcrOptions,
-	OcrDocumentOptions,
-	OcrDocumentResult,
-	RecognizedDocument,
-	DocumentContainer,
-	DocumentText,
-	DocumentTextLine,
-	DocumentRegion,
-	DocumentIndexRange,
-	DocumentTable,
-	DocumentTableCell,
-	DocumentList,
-	DocumentListItem,
 	SearchablePdfOptions,
 } from './types.ts';

@@ -1,6 +1,6 @@
 ---
 name: mac-ocr
-description: Run the `mac-ocr` macOS CLI (or its Node.js API) to recognize text in images and PDFs, extract structured document content on macOS 26+, or create a searchable PDF (from a scanned PDF or an image) with an invisible selectable text layer. Use when asked to OCR, extract or read text from an image or PDF, stream text from a large PDF page by page, extract paragraphs/tables/lists from a document, make a scanned PDF searchable/selectable, or convert an image (PNG, JPEG, HEIC, ...) into a searchable PDF - on-device via Apple's Vision framework (no cloud, no API key). Prefer it over sending images to a multimodal model when you need fast, accurate, local, cheap text extraction. Covers the default OCR action (text/JSON/JSONL output, batching, stdin, URLs, languages, regions, encrypted-PDF passwords), the macOS 26 `document`, `searchable-pdf`, and `languages` subcommands, and the Node API (`ocr`, `ocr.pages`, `ocrDocument`, `ocrDocument.pages`, `createSearchablePdf`, `supportedLanguages`). macOS only; not for editing or replacing a PDF's existing text.
+description: Run the `mac-ocr` macOS CLI (or its Node.js API) to recognize text in images and PDFs, extract structured document content on macOS 26+, or create a searchable PDF from a scanned PDF or an image with an invisible selectable text layer. Use when asked to OCR, extract or read text from an image or PDF, stream text from a large PDF page by page, extract paragraphs/tables/lists from a document, make a scanned PDF searchable/selectable, or convert an image (PNG, JPEG, HEIC, ...) into a searchable PDF - on-device via Apple's Vision framework. Covers the default OCR action (text/JSON/JSONL output, batching, stdin, URLs, languages, regions, encrypted-PDF passwords), the macOS 26 `document`, `searchable-pdf`, and `languages` subcommands, and the Node API (`ocr`, `ocr.pages`, `createSearchablePdf`, `supportedLanguages`). macOS only; not for editing or replacing a PDF's existing text.
 ---
 
 # mac-ocr
@@ -142,21 +142,19 @@ mac-ocr languages --fast    # fast recognizer's set
 
 ## Node.js API
 
-The package also exposes a typed, promise-based API (`import { ocr, ocrDocument, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
+The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
 
 ```ts
 const { text, observations } = await ocr(bytes)          // single image or single-page PDF
 for await (const page of ocr.pages(pdfBytes)) { /* … */ } // stream multi-page PDF
 const pages = await Array.fromAsync(ocr.pages(pdfBytes))  // …or collect → OcrResult[]
-const document = await ocrDocument(bytes, { languages: ['en'] }) // macOS 26+, single page
-for await (const page of ocrDocument.pages(pdfBytes)) { /* structured pages */ }
 const pdf = await createSearchablePdf(bytes)                    // → Uint8Array (PDF bytes)
 const langs = await supportedLanguages()                  // → string[] (ocr + createSearchablePdf)
 ```
 
 - `ocr()` throws if given a multi-page PDF — use `ocr.pages()`.
 - Main-thread `ocr()` calls run one at a time. Avoid an unbounded `Promise.all()` burst, and keep input bytes unchanged until each call settles.
-- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (OCR and document only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `ocrStrategy`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
+- Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `ocrStrategy`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
 - Failures throw `MacOcrError` with `.kind` (`'usage'`, `'runtime'`, `'unavailable'`, …) and `.stderr`.
 
 ## Patterns

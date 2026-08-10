@@ -166,12 +166,7 @@ npm install mac-ocr
 
 ```ts
 import fs from 'node:fs/promises'
-import {
-    ocr,
-    ocrDocument,
-    createSearchablePdf,
-    supportedLanguages
-} from 'mac-ocr'
+import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
 
 // Recognize text in an image or single-page PDF
 const result = await ocr(await fs.readFile('receipt.jpg'))
@@ -185,13 +180,6 @@ for await (const page of ocr.pages(await fs.readFile('book.pdf'))) {
 // …or collect the whole thing into an array
 const pages = await Array.fromAsync(ocr.pages(await fs.readFile('book.pdf')))
 
-// Read macOS 26 structured document content from an image or single-page PDF
-const document = await ocrDocument(await fs.readFile('receipt.jpg'))
-console.log(document.documents[0]?.content.tables)
-for await (const page of ocrDocument.pages(await fs.readFile('book.pdf'))) {
-    console.log(page.page, page.text)
-}
-
 // Build a searchable PDF (returns the PDF bytes)
 const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'), { fast: true })
 await fs.writeFile('scan.ocr.pdf', pdf)
@@ -200,7 +188,7 @@ await fs.writeFile('scan.ocr.pdf', pdf)
 const languages = await supportedLanguages()
 ```
 
-Options mirror the CLI flags (like `{ fast: true }` above), plus an `AbortSignal` for cancellation. `ocrDocument` is macOS 26-only and has its own structured-document option/result types. Failures throw a `MacOcrError` with a `kind` you can branch on. See [docs/NODE.md](docs/NODE.md) for every option, the result types, and error handling.
+Options mirror the CLI flags (like `{ fast: true }` above), plus an `AbortSignal` for cancellation. Failures throw a `MacOcrError` with a `kind` you can branch on. See [docs/NODE.md](docs/NODE.md) for every option, the result types, and error handling.
 
 ## How it works
 

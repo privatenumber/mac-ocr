@@ -53,12 +53,15 @@ export const ocrSingleProcess = async (input: Input, options?: OcrOptions): Prom
 		for await (const line of createInterface({ input: spawned.proc.stdout })) {
 			const page = parseLine(line);
 			if (page !== undefined) {
+				// One page is all we need — its pageCount already tells us
+				// whether the input is multi-page, so don't wait for (or OCR)
+				// a second page just to find out.
 				first = page;
 				break;
 			}
 		}
 	} catch (error) {
-		await waitForExit(spawned, label);
+		await waitForExit(spawned, label); // surface the real failure if there is one
 		throw new MacOcrError(`${label} output could not be read`, {
 			kind: 'parse',
 			cause: error,
@@ -66,6 +69,7 @@ export const ocrSingleProcess = async (input: Input, options?: OcrOptions): Prom
 	}
 
 	if (first !== undefined && first.pageCount > 1) {
+		// Stop the subprocess before it spends time recognizing further pages.
 		spawned.proc.kill();
 		await spawned.exit.catch(() => {});
 		throw new MacOcrError(
@@ -128,11 +132,15 @@ const ocrPages = (input: Input, options?: OcrOptions): OcrPages => {
 			if (completed) {
 				await waitForExit(spawned, label);
 			} else {
+				// Consumer broke out early — stop the subprocess.
 				spawned.proc.kill();
 				await spawned.exit.catch(() => {});
 			}
 		}
 
+		// The CLI exited cleanly: every page must have arrived intact.
+		// Unparseable lines are skipped during streaming, so reconcile against
+		// pageCount to turn silent page loss into a loud error.
 		if (expectedPageCount === undefined) {
 			throw new MacOcrError(`${label} produced no output`, { kind: 'parse' });
 		}

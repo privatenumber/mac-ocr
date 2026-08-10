@@ -26,172 +26,6 @@ const jsonlLine = (page: number, pageCount: number, content: string): string => 
 	observations: [],
 });
 
-const documentPageLine = (
-	page: number,
-	pageCount: number,
-	content: string,
-): string => JSON.stringify({
-	schema: 'mac-ocr.document',
-	schemaVersion: 1,
-	requestRevision: 1,
-	page,
-	pageCount,
-	width: 1,
-	height: 1,
-	text: content,
-	documents: [],
-});
-
-const nestedDocumentJsonlLine = JSON.stringify({
-	schema: 'mac-ocr.document',
-	schemaVersion: 1,
-	requestRevision: 1,
-	page: 1,
-	pageCount: 1,
-	width: 100,
-	height: 100,
-	text: 'Root text',
-	documents: [{
-		confidence: 0.9,
-		content: {
-			boundingRegion: {
-				points: [],
-				boundingBox: {
-					x: 0,
-					y: 0,
-					width: 1,
-					height: 1,
-				},
-			},
-			text: {
-				transcript: 'Root text',
-				boundingRegion: {
-					points: [],
-					boundingBox: {
-						x: 0,
-						y: 0,
-						width: 1,
-						height: 1,
-					},
-				},
-				lines: [{
-					transcript: 'Root text',
-					confidence: 0.9,
-					boundingRegion: {
-						points: [],
-						boundingBox: {
-							x: 0,
-							y: 0,
-							width: 1,
-							height: 1,
-						},
-					},
-					candidates: [{
-						text: 'Root test',
-						confidence: 0.3,
-					}],
-					recognitionLanguages: ['en'],
-					isTitle: true,
-					textDirection: 'leftToRight',
-					shouldWrapToNextLine: false,
-				}],
-			},
-			paragraphs: [],
-			tables: [{
-				boundingRegion: {
-					points: [],
-					boundingBox: {
-						x: 0,
-						y: 0,
-						width: 1,
-						height: 1,
-					},
-				},
-				rows: [[{
-					rowRange: {
-						start: 0,
-						end: 0,
-					},
-					columnRange: {
-						start: 0,
-						end: 0,
-					},
-					content: {
-						boundingRegion: {
-							points: [],
-							boundingBox: {
-								x: 0,
-								y: 0,
-								width: 1,
-								height: 1,
-							},
-						},
-						text: {
-							transcript: 'CELL',
-							boundingRegion: {
-								points: [],
-								boundingBox: {
-									x: 0,
-									y: 0,
-									width: 1,
-									height: 1,
-								},
-							},
-							lines: [],
-						},
-						paragraphs: [],
-						tables: [],
-						lists: [],
-					},
-				}]],
-			}],
-			lists: [{
-				boundingRegion: {
-					points: [],
-					boundingBox: {
-						x: 0,
-						y: 0,
-						width: 1,
-						height: 1,
-					},
-				},
-				items: [{
-					markerType: 'bullet',
-					markerText: '-',
-					text: 'ITEM',
-					content: {
-						boundingRegion: {
-							points: [],
-							boundingBox: {
-								x: 0,
-								y: 0,
-								width: 1,
-								height: 1,
-							},
-						},
-						text: {
-							transcript: 'ITEM',
-							boundingRegion: {
-								points: [],
-								boundingBox: {
-									x: 0,
-									y: 0,
-									width: 1,
-									height: 1,
-								},
-							},
-							lines: [],
-						},
-						paragraphs: [],
-						tables: [],
-						lists: [],
-					},
-				}],
-			}],
-		},
-	}],
-});
-
 /**
  * A Node shim that emits one page announcing more, then stalls — the wrapper
  * must kill it. Node (not `sh`) so the process holds its unique script path
@@ -199,10 +33,6 @@ const nestedDocumentJsonlLine = JSON.stringify({
  */
 const stallingShim = '#!/usr/bin/env node\n'
 	+ `console.log(${JSON.stringify(jsonlLine(1, 3, 'one'))});\n`
-	+ 'setTimeout(() => {}, 30_000);\n';
-
-const documentStallingShim = '#!/usr/bin/env node\n'
-	+ `console.log(${JSON.stringify(documentPageLine(1, 3, 'one'))});\n`
 	+ 'setTimeout(() => {}, 30_000);\n';
 
 const pgrep = async (pattern: string): Promise<string> => {
@@ -272,32 +102,6 @@ describe('wrapper (shim binary)', () => {
 		expect(Buffer.from(pdf).toString()).toContain('--ocr-strategy standard');
 	});
 
-	test('ocrDocument forwards document options and parses its schema', async () => {
-		await using wrapper = await importWrapper(shShim(String.raw`printf '{"schema":"mac-ocr.document","schemaVersion":1,"requestRevision":1,"page":1,"pageCount":1,"width":1,"height":1,"text":"%s","documents":[]}\n' "$*"`));
-		const result = await wrapper.api.ocrDocument(Buffer.from('x'), {
-			languages: ['en'],
-			maxCandidates: 2,
-		});
-		expect(result.text).toBe('document --format jsonl --language en --max-candidates 2 -');
-		expect(result.schemaVersion).toBe(1);
-	});
-
-	test('ocrDocument parses nested table and list content', async () => {
-		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '${nestedDocumentJsonlLine}'`));
-		const result = await wrapper.api.ocrDocument(Buffer.from('x'));
-		const content = result.documents[0]?.content;
-		expect(content?.text.lines[0]?.candidates?.[0]?.text).toBe('Root test');
-		expect(content?.tables[0]?.rows[0]?.[0]?.content.text.transcript).toBe('CELL');
-		expect(content?.lists[0]?.items[0]?.markerType).toBe('bullet');
-	});
-
-	test('ocrDocument rejects an incompatible result schema', async () => {
-		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '{"page":1,"pageCount":1}'`));
-		const error = await wrapper.api.ocrDocument(Buffer.from('x')).catch((error_: unknown) => error_);
-		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
-		expect((error as MacOcrError).kind).toBe('parse');
-	});
-
 	test('ocr() fails multi-page input from the first page, without waiting', async () => {
 		// Page 1 announces pageCount 3; the shim then stalls. The wrapper must
 		// reject from pageCount alone instead of waiting for page 2. (`exec`
@@ -334,60 +138,6 @@ describe('wrapper (shim binary)', () => {
 		expect((error as MacOcrError).kind).toBe('parse');
 		expect((error as MacOcrError).message).toMatch(/2 of 3 pages/);
 		expect(seen).toEqual([1, 2]);
-	});
-
-	test('ocrDocument.pages() rejects duplicate page records', async () => {
-		await using wrapper = await importWrapper(shShim([
-			String.raw`printf '%s\n' '${documentPageLine(1, 3, 'one')}'`,
-			String.raw`printf '%s\n' '${documentPageLine(1, 3, 'duplicate')}'`,
-			String.raw`printf '%s\n' '${documentPageLine(3, 3, 'three')}'`,
-		].join('\n')));
-		let error: unknown;
-		try {
-			// eslint-disable-next-line no-empty -- draining is the duplicate-page scenario
-			for await (const _page of wrapper.api.ocrDocument.pages(Buffer.from('x'))) {}
-		} catch (error_) {
-			error = error_;
-		}
-		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
-		expect((error as MacOcrError).kind).toBe('parse');
-		expect((error as MacOcrError).message).toMatch(/produced 2 of 3 pages/);
-	});
-
-	test('ocrDocument rejects a non-array candidate field', async () => {
-		const malformed = nestedDocumentJsonlLine.replace(
-			/"candidates":\[[^\]]+\]/,
-			'"candidates":"invalid"',
-		);
-		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '${malformed}'`));
-		const error = await wrapper.api.ocrDocument(Buffer.from('x')).catch((error_: unknown) => error_);
-		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
-		expect((error as MacOcrError).kind).toBe('parse');
-	});
-
-	test('ocrDocument.pages() preserves runtime errors across skipped pages', async () => {
-		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '${documentPageLine(2, 2, 'two')}' ; printf '%s\n' '{"schema":"mac-ocr.error","schemaVersion":1,"kind":"runtime","code":"batch_failed","message":"one or more inputs failed","exitCode":1,"command":"document"}' >&3; printf 'Error: page 1 failed\n' >&2; exit 1`));
-		const pages: number[] = [];
-		let error: unknown;
-		try {
-			for await (const page of wrapper.api.ocrDocument.pages(Buffer.from('x'))) {
-				pages.push(page.page);
-			}
-		} catch (error_) {
-			error = error_;
-		}
-		expect(pages).toEqual([2]);
-		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
-		expect((error as MacOcrError).kind).toBe('runtime');
-		expect((error as MacOcrError).code).toBe('batch_failed');
-	});
-
-	test('ocrDocument maps an unavailable envelope', async () => {
-		await using wrapper = await importWrapper(shShim(String.raw`printf '%s\n' '{"schema":"mac-ocr.error","schemaVersion":1,"kind":"unavailable","code":"document_recognition_unavailable","message":"Document recognition requires macOS 26 or later","exitCode":1,"command":"document","requires":"macOS 26+"}' >&3; exit 1`));
-		const error = await wrapper.api.ocrDocument(Buffer.from('x')).catch((error_: unknown) => error_);
-		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
-		expect((error as MacOcrError).kind).toBe('unavailable');
-		expect((error as MacOcrError).code).toBe('document_recognition_unavailable');
 	});
 
 	test('ocr.pages() errors on a clean exit with no output', async () => {
@@ -431,42 +181,11 @@ describe('wrapper (shim binary)', () => {
 		await expectNoLingeringShim(wrapper.binaryPath);
 	});
 
-	test('aborting ocrDocument.pages() kills the subprocess - no zombie', async () => {
-		await using wrapper = await importWrapper(documentStallingShim);
-		const controller = new AbortController();
-		const seen: number[] = [];
-		let error: unknown;
-		try {
-			for await (const page of wrapper.api.ocrDocument.pages(Buffer.from('x'), { signal: controller.signal })) {
-				seen.push(page.page);
-				controller.abort();
-			}
-		} catch (error_) {
-			error = error_;
-		}
-		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
-		expect((error as MacOcrError).kind).toBe('abort');
-		expect(seen).toEqual([1]);
-		await expectNoLingeringShim(wrapper.binaryPath);
-	});
-
 	test('breaking out of ocr.pages() kills the subprocess — no zombie', async () => {
 		await using wrapper = await importWrapper(stallingShim);
 		let seen = 0;
 		// eslint-disable-next-line no-unreachable-loop -- break-early is the scenario under test
 		for await (const _page of wrapper.api.ocr.pages(Buffer.from('x'))) {
-			seen += 1;
-			break;
-		}
-		expect(seen).toBe(1);
-		await expectNoLingeringShim(wrapper.binaryPath);
-	});
-
-	test('breaking out of ocrDocument.pages() kills the subprocess - no zombie', async () => {
-		await using wrapper = await importWrapper(documentStallingShim);
-		let seen = 0;
-		// eslint-disable-next-line no-unreachable-loop -- break-early is the scenario under test
-		for await (const _page of wrapper.api.ocrDocument.pages(Buffer.from('x'))) {
 			seen += 1;
 			break;
 		}
