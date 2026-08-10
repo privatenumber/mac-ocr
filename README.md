@@ -63,7 +63,7 @@ PDF pages stream as they're recognized, so with a large document you see the fir
 ```sh
 mac-ocr document receipt.jpg --format json
 mac-ocr document book.pdf --format jsonl   # one structured result per page
-mac-ocr document form.png -l en            # document language identifiers are two-letter ISO codes
+mac-ocr document form.png -l en            # document language identifier reported by this macOS runtime
 ```
 
 This command requires macOS 26+. It deliberately does not accept `--fast` or `--confidence`: the document recognizer has no fast/accurate switch, and filtering individual lines would make its aggregate text and structural containers inconsistent. See [docs/CLI.md](docs/CLI.md#document) for the full schema and supported options.

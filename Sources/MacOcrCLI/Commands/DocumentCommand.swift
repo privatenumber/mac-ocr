@@ -30,6 +30,9 @@ public struct DocumentCommand: AsyncParsableCommand {
 		if common.files.isEmpty {
 			return
 		}
+		guard #available(macOS 26.0, *) else {
+			return
+		}
 		_ = try documentOptions()
 	}
 
@@ -40,6 +43,7 @@ public struct DocumentCommand: AsyncParsableCommand {
 		if sources.isEmpty {
 			throw CleanExit.helpRequest(self)
 		}
+		try DocumentEngine.checkAvailability()
 		let options = try documentOptions()
 		let outputMode = try common.resolvedOutputMode
 
