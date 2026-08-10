@@ -358,10 +358,10 @@ const startNativeService = (
 			return true;
 		}
 		if (response.type === 'item') {
-			const result = parseResultForOperation(request.operation, response.result);
 			if (request.type === 'stream' && request.cancelled) {
 				return true;
 			}
+			const result = parseResultForOperation(request.operation, response.result);
 			if (
 				request.type !== 'stream'
 				|| response.sequence !== request.nextSequence
