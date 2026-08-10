@@ -53,6 +53,7 @@ import UniformTypeIdentifiers
 		let result = try TestSupport.run(["document", TestSupport.fixturePath("hello.png"), "--language", "en-US"])
 		#expect(result.exitCode == 64)
 		#expect(result.stderr.contains("Unsupported document recognition language: en-US"), "stderr: \(result.stderr)")
+		#expect(result.stderr.contains("Usage: mac-ocr document"), "stderr: \(result.stderr)")
 	}
 }
 

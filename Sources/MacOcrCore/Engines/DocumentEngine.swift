@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import Vision
 
@@ -93,7 +94,10 @@ private func recognizeDocument(session: VisionSession, options: DocumentOptions)
 
 	let observations: [DocumentObservation]
 	do {
-		observations = try await request.perform(on: session.image, orientation: session.orientation)
+		observations = try await performDocumentRequest(
+			request,
+			session: session
+		)
 	} catch {
 		try Task.checkCancellation()
 		throw error
@@ -108,6 +112,34 @@ private func recognizeDocument(session: VisionSession, options: DocumentOptions)
 		text: documents.map(\.content.text.transcript).joined(separator: "\n"),
 		documents: documents
 	)
+}
+
+@available(macOS 26.0, *)
+private func performDocumentRequest(
+	_ request: RecognizeDocumentsRequest,
+	session: VisionSession
+) async throws -> [DocumentObservation] {
+	let savedStandardOutput = dup(STDOUT_FILENO)
+	guard savedStandardOutput >= 0 else {
+		return try await request.perform(on: session.image, orientation: session.orientation)
+	}
+	let nullOutput = open("/dev/null", O_WRONLY)
+	guard nullOutput >= 0 else {
+		close(savedStandardOutput)
+		return try await request.perform(on: session.image, orientation: session.orientation)
+	}
+	guard dup2(nullOutput, STDOUT_FILENO) >= 0 else {
+		close(nullOutput)
+		close(savedStandardOutput)
+		return try await request.perform(on: session.image, orientation: session.orientation)
+	}
+	close(nullOutput)
+	defer {
+		fflush(stdout)
+		dup2(savedStandardOutput, STDOUT_FILENO)
+		close(savedStandardOutput)
+	}
+	return try await request.perform(on: session.image, orientation: session.orientation)
 }
 
 @available(macOS 26.0, *)

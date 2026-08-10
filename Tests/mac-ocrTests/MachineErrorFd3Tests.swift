@@ -73,4 +73,19 @@ import Testing
 		#expect(envelope["command"] as? String == "ocr")
 		#expect(envelope["schemaVersion"] as? Int == 1)
 	}
+
+	@Test func ocrCustomWordDoesNotChangeCommandAttribution() throws {
+		let run = try TestSupport.runCapturingFd3([
+			TestSupport.fixturePath("invalid.txt"),
+			"--custom-words",
+			"document",
+		])
+		#expect(run.exitCode == 1)
+
+		let envelope = try #require(
+			JSONSerialization.jsonObject(with: Data(run.fd3.utf8)) as? [String: Any],
+			"Expected a JSON error envelope on fd 3; got: \(run.fd3)"
+		)
+		#expect(envelope["command"] as? String == "ocr")
+	}
 }

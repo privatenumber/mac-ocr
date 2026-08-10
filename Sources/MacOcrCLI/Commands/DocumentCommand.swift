@@ -26,6 +26,13 @@ public struct DocumentCommand: AsyncParsableCommand {
 	@OptionGroup var common: OcrCommandOptions
 	@OptionGroup var recognition: DocumentRecognitionOptions
 
+	public func validate() throws {
+		if common.files.isEmpty {
+			return
+		}
+		_ = try documentOptions()
+	}
+
 	public func run() async throws {
 		setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -33,18 +40,7 @@ public struct DocumentCommand: AsyncParsableCommand {
 		if sources.isEmpty {
 			throw CleanExit.helpRequest(self)
 		}
-		try DocumentEngine.checkAvailability()
-
-		let options: DocumentOptions
-		do {
-			options = try DocumentEngine.prepare(
-				options: recognition.buildDocumentOptions(
-					regionOfInterest: try common.roi.map(parseRegionOfInterest)
-				)
-			)
-		} catch let error as DocumentLanguageError {
-			throw ValidationError(error.message)
-		}
+		let options = try documentOptions()
 		let outputMode = try common.resolvedOutputMode
 
 		let writesToFiles: Bool
@@ -87,5 +83,18 @@ public struct DocumentCommand: AsyncParsableCommand {
 			try await DocumentEngine.run(session: session, options: options)
 		}
 		reporter?.finish(outputPath: nil)
+	}
+
+	private func documentOptions() throws -> DocumentOptions {
+		try DocumentEngine.checkAvailability()
+		do {
+			return try DocumentEngine.prepare(
+				options: recognition.buildDocumentOptions(
+					regionOfInterest: try common.roi.map(parseRegionOfInterest)
+				)
+			)
+		} catch let error as DocumentLanguageError {
+			throw ValidationError(error.message)
+		}
 	}
 }

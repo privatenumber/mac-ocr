@@ -71,7 +71,10 @@ private let knownSubcommands: Set<String> = {
 }()
 
 private func machineCommandName(_ arguments: [String]) -> String {
-	arguments.first { knownSubcommands.contains($0) } ?? MacOcr.configuration.commandName ?? "mac-ocr"
+	guard let command = arguments.first, knownSubcommands.contains(command) else {
+		return OCRCommand.configuration.commandName ?? "ocr"
+	}
+	return command
 }
 
 private func runParsedCommand(_ arguments: [String]) async {
