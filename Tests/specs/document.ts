@@ -8,6 +8,20 @@ const documentRecognitionAvailable = Number(
 ) >= 26;
 
 await describe('ocrDocument', () => {
+	test('rejects invalid input and options through the promise', async () => {
+		const inputError = await ocrDocument('document' as never).catch((error: unknown) => error);
+		const optionsError = await ocrDocument(Buffer.from('document'), {
+			regionOfInterest: {
+				x: 0,
+				y: 0,
+				width: 2,
+				height: 1,
+			},
+		}).catch((error: unknown) => error);
+		expect(inputError).toBeInstanceOf(TypeError);
+		expect(optionsError).toBeInstanceOf(RangeError);
+	});
+
 	test('returns structured content for an image', async () => {
 		if (!documentRecognitionAvailable) {
 			const error = await ocrDocument(fixtureData('hello.png')).catch((error_: unknown) => error_);

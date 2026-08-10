@@ -137,19 +137,20 @@ const ocrDocumentPagesSingleProcess = (
 	return { [Symbol.asyncIterator]: iterate };
 };
 
-const ocrDocumentSingle = (
+const ocrDocumentSingle = async (
 	input: Input,
 	options?: OcrDocumentOptions,
-): Promise<OcrDocumentResult> => (
-	isMainThread
-		? ocrDocumentWithService(
-			input,
-			buildArgs(options),
-			options?.password || process.env.MAC_OCR_PDF_PASSWORD,
-			options?.signal,
-		)
-		: ocrDocumentSingleProcess(input, options)
-);
+): Promise<OcrDocumentResult> => {
+	if (!isMainThread) {
+		return ocrDocumentSingleProcess(input, options);
+	}
+	return ocrDocumentWithService(
+		input,
+		buildArgs(options),
+		options?.password || process.env.MAC_OCR_PDF_PASSWORD,
+		options?.signal,
+	);
+};
 
 const ocrDocumentPages = (input: Input, options?: OcrDocumentOptions): OcrDocumentPages => {
 	if (!isMainThread) {
