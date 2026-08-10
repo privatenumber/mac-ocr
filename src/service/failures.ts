@@ -22,7 +22,7 @@ export const serviceSpawnFailure = (error: unknown, stderr: string): MacOcrError
 };
 
 export const serviceAbortFailure = (stderr = ''): MacOcrError => new MacOcrError(
-	stderr || 'mac-ocr ocr was aborted',
+	stderr || 'mac-ocr operation was aborted',
 	{
 		kind: 'abort',
 		stderr,
