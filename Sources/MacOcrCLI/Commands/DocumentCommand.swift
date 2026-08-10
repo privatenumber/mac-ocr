@@ -27,7 +27,7 @@ public struct DocumentCommand: AsyncParsableCommand {
 	@OptionGroup var recognition: DocumentRecognitionOptions
 
 	public func validate() throws {
-		if common.files.isEmpty {
+		if common.files.isEmpty && FileHandle.standardInput.isTerminal {
 			return
 		}
 		guard #available(macOS 26.0, *) else {

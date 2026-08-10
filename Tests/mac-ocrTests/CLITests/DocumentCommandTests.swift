@@ -55,6 +55,17 @@ import UniformTypeIdentifiers
 		#expect(result.stderr.contains("Unsupported document recognition language: en-US"), "stderr: \(result.stderr)")
 		#expect(result.stderr.contains("Usage: mac-ocr document"), "stderr: \(result.stderr)")
 	}
+
+	@Test(.disabled(if: !documentRecognitionAvailable, "Document recognition requires macOS 26."))
+	func validatesPipedDocumentLanguage() throws {
+		let result = try TestSupport.run(
+			["document", "--language", "en-US"],
+			stdinData: Data(contentsOf: URL(fileURLWithPath: TestSupport.fixturePath("hello.png")))
+		)
+		#expect(result.exitCode == 64)
+		#expect(result.stderr.contains("Unsupported document recognition language: en-US"), "stderr: \(result.stderr)")
+		#expect(result.stderr.contains("Usage: mac-ocr document"), "stderr: \(result.stderr)")
+	}
 }
 
 private let documentRecognitionAvailable: Bool = {
