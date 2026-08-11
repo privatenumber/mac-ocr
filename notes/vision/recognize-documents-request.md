@@ -46,20 +46,20 @@ Apple's WWDC25 session says the current implementation returns one `DocumentObse
 
 `RecognizeDocumentsRequest` exposes these relevant properties:
 
-| Property | Contract | mac-ocr implication |
-| --- | --- | --- |
-| `regionOfInterest` | A normalized Vision rectangle. | Can map from mac-ocr's ROI after converting its top-left coordinates to Vision's lower-left space. |
-| `textRecognitionOptions.minimumTextHeightFraction` | Minimum text height relative to image height. Apple documents a default of `1/32` (`0.03125`); increasing it reduces memory and time while ignoring smaller text. | Must be explicitly configured when compatibility with small-text OCR matters. |
-| `textRecognitionOptions.automaticallyDetectLanguage` | Attempts language detection for recognition and correction. | Can map the no-language-hint path, but must be validated against the current language contract. |
-| `textRecognitionOptions.recognitionLanguages` | Ordered language preferences. Apple documents two-letter ISO codes. | Document recognition accepts the request's own language identifiers, not ordinary OCR's BCP-47 contract. |
-| `textRecognitionOptions.useLanguageCorrection` | Enables language correction. Disabling it returns raw recognition results with a speed/accuracy trade-off. | Maps to `--no-language-correction`. |
-| `textRecognitionOptions.customWords` | Custom words take precedence over the standard lexicon and are ignored when language correction is disabled. | Maps to mac-ocr custom words, with the same caveat surfaced in documentation. |
-| `textRecognitionOptions.maximumCandidateCount` | Default `3`; maximum `10`. | mac-ocr must set this explicitly because its default is `1`. |
-| `barcodeDetectionOptions.enabled` | Disabled by default. | Do not enable without an explicit document-output feature. |
-| `barcodeDetectionOptions.symbologies` | When barcode detection is enabled, the default scans all symbologies. | Limit only when a future product contract needs specific barcode types. |
-| `barcodeDetectionOptions.coalesceCompositeSymbologies` | Defaults to `false`. | Preserve the default unless composite barcode handling is specified. |
+| Property | Contract |
+| --- | --- |
+| `regionOfInterest` | A normalized Vision rectangle. |
+| `textRecognitionOptions.minimumTextHeightFraction` | Minimum text height relative to image height. Apple documents a default of `1/32` (`0.03125`); increasing it reduces memory and time while ignoring smaller text. |
+| `textRecognitionOptions.automaticallyDetectLanguage` | Attempts language detection for recognition and correction. |
+| `textRecognitionOptions.recognitionLanguages` | Ordered language preferences. Apple documents two-letter ISO codes. |
+| `textRecognitionOptions.useLanguageCorrection` | Enables language correction. Disabling it returns raw recognition results with a speed/accuracy trade-off. |
+| `textRecognitionOptions.customWords` | Custom words take precedence over the standard lexicon and are ignored when language correction is disabled. |
+| `textRecognitionOptions.maximumCandidateCount` | Default `3`; maximum `10`. |
+| `barcodeDetectionOptions.enabled` | Disabled by default. |
+| `barcodeDetectionOptions.symbologies` | When barcode detection is enabled, the default scans all symbologies. |
+| `barcodeDetectionOptions.coalesceCompositeSymbologies` | Defaults to `false`. |
 
-The request does not expose `RecognizeTextRequest.RecognitionLevel`. There is no `fast` or `accurate` selector, so this request cannot preserve mac-ocr's `--fast` contract.
+The request does not expose `RecognizeTextRequest.RecognitionLevel`. There is no `fast` or `accurate` selector.
 
 ## Result model
 
@@ -91,33 +91,9 @@ On macOS 26, each `RecognizedTextObservation` exposes its top-candidate `transcr
 
 ## Geometry and reading order
 
-Vision's Swift-native geometry uses normalized regions with a lower-left origin. mac-ocr emits top-left-origin boxes, so any adapter must apply the same coordinate conversion used by the legacy `VNRecognizeTextRequest` path.
+Vision's Swift-native geometry uses normalized regions with a lower-left origin.
 
-The API exposes aggregate text, paragraphs, lists, tables, and nested containers as separate access paths. Do not assume that concatenating these collections creates a de-duplicated or natural reading order. A document-output feature must define its own flattening policy and test it against multi-column text, lists, tables, and nested cells.
-
-The line sequence is a stronger candidate for plain-text ordering than sorting blocks by geometric position, but this is an implementation hypothesis that requires fixture-based validation. Apple does not document a flattening or deduplication algorithm.
-
-## Compatibility with current mac-ocr OCR
-
-The current engine uses `VNRecognizeTextRequest` to produce one line-oriented `Observation` with top candidates, confidence, a request revision, a bounding box, and optional per-word geometry.
-
-`RecognizeDocumentsRequest` can potentially supply line-oriented output from `document.text.lines`, but it differs in important ways:
-
-| Current contract | Document-request status |
-| --- | --- |
-| Accurate and fast modes | Not preservable: no recognition-level setting exists. |
-| BCP-47 language options | Needs runtime validation against `Locale.Language` input requirements. |
-| Minimum confidence | Can be filtered after line recognition. |
-| Maximum candidates | Supported, but request default differs. |
-| Custom words and language correction | Supported, with custom words ignored when correction is disabled. |
-| Minimum text height | Supported, with a much larger documented default than mac-ocr's effective legacy behavior. |
-| ROI | Supported, but coordinate conversion must be verified. |
-| Per-line confidence and geometry | Available through recognized text lines. |
-| Per-word geometry | Potentially available through `words` and range geometry; requires fixture validation. |
-| Legacy request revision field | No directly equivalent line-level field is exposed by the inspected document model. |
-| Explicit `VNRequest.cancel()` | No equivalent is exposed by the request value type. |
-
-The current mac-ocr product has no reason to replace its ordinary OCR or searchable-PDF path with this request. The meaningful capability is structured document output.
+The API exposes aggregate text, paragraphs, lists, tables, and nested containers as separate access paths. Do not assume that concatenating these collections creates a de-duplicated or natural reading order. Apple does not document a flattening or deduplication algorithm.
 
 ## Known limits and unknowns
 
@@ -142,27 +118,19 @@ The current mac-ocr product has no reason to replace its ordinary OCR or searcha
 
 An Apple Developer Forums report describes receipt content splitting into separate paragraphs and columns. The thread has no Apple staff resolution, so it is not an API contract, but it is a useful regression fixture category: [RecognizeDocumentsRequest for receipts](https://developer.apple.com/forums/thread/788381).
 
-On the Xcode 26.6 / macOS 26.5.2 arm64 probe host, `en` succeeds and `en-US` is rejected as unsupported. Keep this feature's language interface aligned with the identifiers reported by the document request; those include regional identifiers for some languages, so do not constrain callers to two-letter codes.
+On the Xcode 26.6 / macOS 26.5.2 arm64 probe host, `en` succeeds and `en-US` is rejected as unsupported. The request's supported identifiers include regional identifiers for some languages, so callers should not assume two-letter codes are sufficient.
 
-The same host recognizes a generated two-by-two ruled grid as one table with two rows and two columns. This is a release-gated mac-ocr conversion test, not a claim that arbitrary table layouts have stable cross-release semantics.
+The same host recognizes a generated two-by-two ruled grid as one table with two rows and two columns. This is an observed generated input, not a claim that arbitrary table layouts have stable cross-release semantics.
 
 It also recognizes a generated three-item numbered list as one list with decimal marker metadata and `ALPHA`, `BETA`, and `GAMMA` item text. This is a release-gated conversion test for simple ordered lists, not a general list-layout guarantee.
 
 ## Follow-up characterization
 
-The current release contract covers a guarded macOS 26 API, one-shot process cancellation, root transcripts, and simple generated table/list conversion. The following experiments are required before expanding that contract to claim parity, generalized reading order, or native active-request cancellation.
+The following experiments are required before claiming generalized reading order, native active-request cancellation, or stable cross-release behavior.
 
 1. Compare document and legacy text recognition on fixtures for receipts, small text, multi-column pages, tables, lists, RTL text, rotation, and non-document images.
 2. Sweep `minimumTextHeightFraction` from the documented default to the current legacy-equivalent threshold and record text loss, runtime, and memory.
 3. Record exact language support on supported Intel and Apple Silicon hosts, including BCP-47 regional tags.
-4. Test `Task` cancellation during `perform(on:)` and verify subprocess/service cleanup behavior.
-5. Verify candidate ordering, confidence, line and word geometry, ROI conversion, and top-left coordinate output.
-6. Define and test a deterministic flattened-text policy for nested containers, lists, tables, and multiple columns.
-7. Encode representative observations and compare schema stability across supported macOS 26 releases.
-8. Measure bounded concurrent requests before choosing a `VisionRuntime` policy for the request.
-
-## mac-ocr adoption boundary
-
-The safe product direction is a new macOS 26-only structured-document API and CLI command. It should have a mac-ocr-owned schema and a typed unavailable error on older systems. It should not alter `ocr()`, `ocr.pages()`, `searchable-pdf`, or their existing schemas.
-
-Start with structured JSON and a convenient transcript. Defer Markdown rendering, searchable-PDF integration, barcode policy, and automatic fallback until the required experiments establish their behavior.
+4. Test `Task` cancellation during `perform(on:)`.
+5. Verify candidate ordering, confidence, line and word geometry, and ROI conversion.
+6. Encode representative observations and compare schema stability across supported macOS 26 releases.

@@ -6,7 +6,6 @@
 
 - **Modern Swift API:** macOS 15.0 and later. The inspected Xcode 26.6 / macOS 26.5 SDK exposes revisions 1 and 2; this host supports revision 2.
 - **Legacy API:** `VNGenerateImageFeaturePrintRequest` is available from macOS 10.15. Its revision 2 is available from macOS 14.0.
-- **Current mac-ocr floor:** macOS 10.15. A product feature needs a revision and availability policy before it can compare results across hosts.
 
 ## Sources
 
@@ -61,7 +60,7 @@ An in-memory 500 by 700 invoice-like raster produced a 3,072-byte feature print 
 | Blank page | `1.4409081935882568` |
 | Unrelated color-striped raster | `1.2155977487564087` |
 
-The same-template variant is substantially closer than the transformed and unrelated variants even though its invoice number differs. That demonstrates why a general "duplicate" label would be a mac-ocr policy decision with potentially destructive consequences, not an Apple API result.
+The same-template variant is substantially closer than the transformed and unrelated variants even though its invoice number differs. That demonstrates why a general "duplicate" label is a caller policy decision with potentially destructive consequences, not an Apple API result.
 
 ## Follow-up characterization
 
@@ -73,7 +72,3 @@ Before product adoption, measure a larger representative corpus while recording 
 4. Separate page, receipt, photograph, and screenshot cohorts.
 5. Revision 1 versus revision 2 comparability, distance distributions, latency, memory, and concurrent-request behavior.
 6. Candidate-generation approaches that avoid exhaustive comparison for large page sets.
-
-## mac-ocr adoption boundary
-
-The narrow future surface is an opt-in `inspect similarity` result that reports pairs and raw distances with their request metadata. It must not call a pair duplicate, group pages, delete/skip input, or alter `ocr()`, `ocr.pages()`, `document`, or `searchable-pdf` without a separate product decision, a documented corpus, and behavior-level coverage.

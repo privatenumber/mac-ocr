@@ -6,7 +6,6 @@
 
 - **Modern Swift API:** macOS 15.0 and later; the inspected Xcode 26.6 / macOS 26.5 SDK exposes only `.revision1`.
 - **Legacy API:** `VNDetectDocumentSegmentationRequest` is available from macOS 12.0 and returns `VNRectangleObservation` values.
-- **Current mac-ocr floor:** macOS 10.15. Any product use needs an unavailable result below macOS 12, and an availability-gated legacy path on macOS 12 through 14.
 
 ## Sources
 
@@ -38,8 +37,6 @@ The request establishes a document boundary and mask for an input image. It does
 - a duplicate or similarity judgment; or
 - multiple documents in one input through the modern result type.
 
-Perspective correction needs a mac-ocr-owned transform, output-size policy, interpolation policy, and geometry validation. The request alone is not that policy.
-
 ## Characterization
 
 **Host:** macOS 26.5.2, arm64; Xcode 26.6 (build 17F113); macOS 26.5 SDK; modern request revision 1.
@@ -57,7 +54,3 @@ Before product adoption, measure:
 3. Segmentation-mask dimensions, pixel format, and alignment with corners.
 4. A projective correction's output bounds, interpolation artifacts, and downstream OCR geometry.
 5. Failure/no-result rates on supported macOS releases and architectures.
-
-## mac-ocr adoption boundary
-
-The narrow future surface is an opt-in `inspect document-boundary` result that reports the four points, confidence, mask metadata, request revision, and no-result state. It must not infer reading orientation, mutate input, or alter `ocr()`, `ocr.pages()`, `document`, or `searchable-pdf` without a separate product decision and behavior-level coverage.

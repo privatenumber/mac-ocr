@@ -6,7 +6,6 @@
 
 - **Modern Swift API:** macOS 15.0 and later; the inspected Xcode 26.6 / macOS 26.5 SDK exposes only `.revision1`.
 - **Legacy API:** `VNDetectHorizonRequest` is available from macOS 10.13, with revision 1 from macOS 10.14.
-- **Current mac-ocr floor:** macOS 10.15. Any product use needs an availability-gated legacy path below macOS 15.
 
 ## Sources
 
@@ -38,8 +37,6 @@ The request establishes a geometric correction for a detected horizon. It does n
 - a language, text-direction, or page-top observation; or
 - a result for every image.
 
-`mac-ocr` already honors image EXIF orientation when creating `VisionSession`, and renders PDF pages in an upright context. Horizon detection would therefore inspect remaining scene skew, not replace current orientation normalization.
-
 ## Characterization
 
 **Host:** macOS 26.5.2, arm64; Xcode 26.6 (build 17F113); macOS 26.5 SDK; modern request revision 1.
@@ -62,7 +59,3 @@ Before product adoption, measure the following on generated and retained test fi
 3. Physical `90`, `180`, and `270` degree rotations, separately from EXIF orientation tags.
 4. The effect of applying the documented inverse transform on output bounds, resolution, and OCR geometry.
 5. Confidence distributions and no-result rates across supported macOS releases and architectures.
-
-## mac-ocr adoption boundary
-
-The narrow future surface is an opt-in `inspect horizon` result that reports Vision's angle, transform, confidence, request revision, and no-result state. It must not auto-rotate input or change the behavior of `ocr()`, `ocr.pages()`, `document`, or `searchable-pdf` without a separate product decision and behavior-level coverage.
