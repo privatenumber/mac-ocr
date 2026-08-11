@@ -29,7 +29,7 @@ The modern request returns one `FeaturePrintObservation`.
 
 The request's default `cropAndScaleAction` is `scaleToFill`; scaling occurs before feature-print generation. Its normalized region of interest uses a lower-left origin.
 
-Feature prints must be comparable before computing a distance. The legacy API documents an error for non-comparable prints. A product should therefore retain request revision, crop-and-scale action, and input normalization metadata with each measurement; it should not persist a bare number as a durable cross-version contract.
+Feature prints must be comparable before computing a distance. The legacy API documents an error for non-comparable prints.
 
 ## What the request establishes
 
@@ -41,13 +41,13 @@ The request establishes an ordered similarity measurement between two feature pr
 - semantic equivalence; or
 - a safe action such as skipping, deleting, or merging pages.
 
-Pairwise comparison requires `n * (n - 1) / 2` distances for `n` pages. Any large-input grouping needs an explicit candidate-generation and resource policy.
+Pairwise comparison requires `n * (n - 1) / 2` distances for `n` pages.
 
 ## Characterization
 
 **Host:** macOS 26.5.2, arm64; Xcode 26.6 (build 17F113); macOS 26.5 SDK; modern request revision 2; default `scaleToFill` crop mode.
 
-An in-memory 500 by 700 invoice-like raster produced a 3,072-byte feature print with 768 `float` elements. The table records its distance to generated variants. It is a regression-fixture baseline, not a universal threshold.
+An in-memory 500 by 700 invoice-like raster produced a 3,072-byte feature print with 768 `float` elements. The table records its distance to generated variants; these values do not define a threshold for other inputs.
 
 | Variant | Distance |
 | --- | ---: |
@@ -60,15 +60,4 @@ An in-memory 500 by 700 invoice-like raster produced a 3,072-byte feature print 
 | Blank page | `1.4409081935882568` |
 | Unrelated color-striped raster | `1.2155977487564087` |
 
-The same-template variant is substantially closer than the transformed and unrelated variants even though its invoice number differs. That demonstrates why a general "duplicate" label is a caller policy decision with potentially destructive consequences, not an Apple API result.
-
-## Follow-up characterization
-
-Before product adoption, measure a larger representative corpus while recording source image dimensions, request revision, crop mode, architecture, and macOS release:
-
-1. Identical, recompressed, resized, cropped, skewed, and physically rotated pages.
-2. Same template with different names, dates, numbers, barcodes, and redactions.
-3. Blank pages, separator pages, repeated scans, and unrelated documents.
-4. Separate page, receipt, photograph, and screenshot cohorts.
-5. Revision 1 versus revision 2 comparability, distance distributions, latency, memory, and concurrent-request behavior.
-6. Candidate-generation approaches that avoid exhaustive comparison for large page sets.
+The same-template variant is substantially closer than the transformed and unrelated variants even though its invoice number differs. A feature-print distance is therefore not an Apple duplicate classification.

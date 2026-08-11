@@ -25,6 +25,7 @@ Create a tool folder when the repository makes independent, reusable claims abou
 - State the inspected Xcode and SDK version when a claim comes from the installed interface rather than public documentation.
 - Distinguish observed facts from inference or a mac-ocr decision. Link the source that supports each fact.
 - Keep current-system notes self-contained. Put historical change narratives in a tool's implementation-history section only when they explain a current constraint.
+- Keep notes as current reference material, not a task tracker. Put open investigations, experiment plans, and checklists in issues or a separate working artifact.
 - Put executable contracts in `Tests/`; notes explain source evidence, ownership, and maintenance intent.
 
 ## Maintenance

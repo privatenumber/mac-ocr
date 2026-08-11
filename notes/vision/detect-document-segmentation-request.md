@@ -1,6 +1,6 @@
 # DetectDocumentSegmentationRequest
 
-`DetectDocumentSegmentationRequest` finds one rectangular document region and a segmentation mask. It can support perspective-correction inspection, but its geometry does not establish which physical edge is the document's semantic top.
+`DetectDocumentSegmentationRequest` finds one rectangular document region and a segmentation mask. Its geometry does not establish which physical edge is the document's semantic top.
 
 ## Status
 
@@ -43,14 +43,4 @@ The request establishes a document boundary and mask for an input image. It does
 
 An in-memory page with a centered white rectangular document, page border, title, and text-like horizontal rules produced a confidence of `0.99`. Its detected normalized corners were approximately `(0.153, 0.898)`, `(0.847, 0.895)`, `(0.854, 0.102)`, and `(0.153, 0.102)`.
 
-Rotating the same complete raster by 180 degrees produced the same confidence and corners. That result is expected from a page-boundary detector: its named corners locate the raster rectangle, not the page's semantic reading orientation.
-
-## Follow-up characterization
-
-Before product adoption, measure:
-
-1. Perspective, keystone, shadow, glare, partial-page, receipt, multi-document, blank-page, and non-document inputs.
-2. Corner error against generated quadrilaterals at different resolutions and EXIF orientations.
-3. Segmentation-mask dimensions, pixel format, and alignment with corners.
-4. A projective correction's output bounds, interpolation artifacts, and downstream OCR geometry.
-5. Failure/no-result rates on supported macOS releases and architectures.
+Rotating the same complete raster by 180 degrees produced the same confidence and corners. The named corners locate the raster rectangle, not the page's semantic reading orientation.

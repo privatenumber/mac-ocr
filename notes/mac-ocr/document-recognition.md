@@ -6,7 +6,7 @@ This note owns mac-ocr's integration of Vision structured-document recognition. 
 
 [`document`](../../Sources/MacOcrCLI/Commands/DocumentCommand.swift) is a macOS 26-only structured-document feature. It uses [`RecognizeDocumentsRequest`](../../Sources/MacOcrCore/Engines/DocumentEngine.swift) and a mac-ocr-owned result schema. Ordinary OCR and searchable-PDF generation continue to use the [legacy text-recognition path](../../Sources/MacOcrCore/Engines/OCREngine.swift).
 
-The document command returns structured JSON and a convenient transcript. Markdown rendering, searchable-PDF integration, barcode policy, and automatic fallback remain deferred until their behavior is characterized.
+The document command returns structured JSON and a convenient transcript. It does not render Markdown, add text to searchable PDFs, enable barcode detection, or fall back to ordinary OCR.
 
 ## Integration map
 
@@ -15,37 +15,24 @@ The [ordinary OCR engine](../../Sources/MacOcrCore/Engines/OCREngine.swift) uses
 | Current mac-ocr contract | Document-request status |
 | --- | --- |
 | Accurate and fast modes | Not preservable: the Vision request has no recognition-level setting. |
-| BCP-47 language options | Requires runtime validation against `Locale.Language` input requirements. |
-| Minimum confidence | Can be filtered after line recognition. |
+| Language options | Canonicalized against `supportedRecognitionLanguages`; unsupported identifiers produce `DocumentLanguageError`. |
 | Maximum candidates | Supported, but the Vision default differs. |
 | Custom words and language correction | Supported, with custom words ignored when correction is disabled. |
 | Minimum text height | Supported, with a larger documented default than legacy text recognition. |
-| ROI | Supported, but needs lower-left to top-left geometry conversion. |
+| ROI | When supplied, converted from `BoundingBox` through `CGRect` to Vision's `NormalizedRect`. |
 | Per-line confidence and geometry | Available through recognized text lines. |
-| Per-word geometry | Potentially available through `words` and range geometry; requires fixture validation. |
+| Per-word geometry | The Vision result model exposes optional `words` and range geometry. |
 | Legacy request revision field | No directly equivalent line-level field is exposed. |
 | Explicit `VNRequest.cancel()` | No equivalent is exposed by the request value type. |
 
-## Current integration decisions
+## Request configuration
 
-- Map the project ROI to Vision's lower-left normalized coordinates.
-- Set the candidate count explicitly because mac-ocr defaults to one candidate and Vision defaults to three.
-- Preserve language correction and custom-word behavior, including Vision's rule that custom words are ignored when correction is disabled.
-- Return an unavailable error on pre-macOS 26 hosts rather than silently falling back to ordinary OCR.
-- Keep document output separate from `ocr()`, `ocr.pages()`, and `searchable-pdf` schemas.
+- `DocumentOptions` defaults to one candidate per line; `DocumentEngine` assigns that value to Vision's `maximumCandidateCount`.
+- Empty language options enable Vision automatic language detection. Non-empty options are canonicalized against `supportedRecognitionLanguages` before the request runs.
+- `DocumentEngine` assigns language correction, custom words, minimum text height, maximum candidate count, and region of interest to `RecognizeDocumentsRequest`.
+- Barcode detection is disabled for every document request.
+- `DocumentEngine` throws `DocumentUnavailableError` below macOS 26 and does not invoke ordinary OCR as a fallback.
 
-## Reading order
+## Text output
 
-The [document API](../vision/recognize-documents-request.md#geometry-and-reading-order) exposes aggregate text, paragraphs, lists, tables, and nested containers through parallel access paths. mac-ocr needs a deterministic flattened-text policy before it claims natural reading order for multi-column text, lists, tables, or nested cells.
-
-The source notes identify the line sequence as a stronger candidate than sorting blocks by geometric position, but that is an implementation hypothesis. Validate it with fixtures before making it a public-output guarantee.
-
-## Required follow-up
-
-Before expanding this feature, test and decide:
-
-1. A deterministic flattened-text policy for nested containers, lists, tables, and multiple columns.
-2. Candidate ordering, confidence, line and word geometry, ROI conversion, and top-left output coordinates.
-3. `Task` cancellation through native service and subprocess cleanup.
-4. Bounded concurrent requests before choosing a `VisionRuntime` policy.
-5. Exact language support on Intel and Apple Silicon hosts, including regional language tags.
+`DocumentEngine` joins each recognized document's root `content.text.transcript` with a newline. The structured result separately retains paragraphs, tables, and lists; it does not derive plain text by concatenating those parallel collections.

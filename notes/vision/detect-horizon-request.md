@@ -1,6 +1,6 @@
 # DetectHorizonRequest
 
-`DetectHorizonRequest` detects a horizon's tilt in an image. Its output can support a future scene-skew inspection feature, but it is not a text-orientation or quarter-turn classifier.
+`DetectHorizonRequest` detects a horizon's tilt in an image. It is not a text-orientation or quarter-turn classifier.
 
 ## Status
 
@@ -48,14 +48,4 @@ An in-memory synthetic landscape with blue sky and a green ground plane produced
 | Level landscape | No horizon observation. |
 | Landscape rotated +10 degrees | One observation: `-9.875000417092517` degrees, confidence `1.0`. |
 
-The rotated result's transform was a rotation of approximately `-9.875` degrees with translation. This confirms that the request can report small landscape skew in this controlled input. It does not establish a sign convention or a detection-rate guarantee for photographs, scans, documents, or quarter-turn rotations.
-
-## Follow-up characterization
-
-Before product adoption, measure the following on generated and retained test fixtures with the request revision and orientation recorded:
-
-1. Level and `+/-3`, `+/-10`, `+/-20` degree natural scenes.
-2. Receipts, printed pages, scans with borders, blank pages, and image-only PDFs.
-3. Physical `90`, `180`, and `270` degree rotations, separately from EXIF orientation tags.
-4. The effect of applying the documented inverse transform on output bounds, resolution, and OCR geometry.
-5. Confidence distributions and no-result rates across supported macOS releases and architectures.
+The rotated result's transform was a rotation of approximately `-9.875` degrees with translation. These measurements describe this generated landscape only; they do not establish a sign convention or detection rate for photographs, scans, documents, or quarter-turn rotations.

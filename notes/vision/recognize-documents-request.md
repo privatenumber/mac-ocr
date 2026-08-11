@@ -95,42 +95,19 @@ Vision's Swift-native geometry uses normalized regions with a lower-left origin.
 
 The API exposes aggregate text, paragraphs, lists, tables, and nested containers as separate access paths. Do not assume that concatenating these collections creates a de-duplicated or natural reading order. Apple does not document a flattening or deduplication algorithm.
 
-## Known limits and unknowns
-
-### Confirmed limits
+## Limits
 
 - Requires macOS 26 or later.
 - Does not support fast recognition mode.
 - Barcode detection is opt-in.
 - The request is designed for document structure, not as a drop-in replacement for line OCR.
 
-### Unresolved behavior
+## Characterization
 
-- Whether cancelling the Swift task promptly stops `perform(on:)`.
-- How the request behaves for non-document images and empty pages.
-- Exact supported-language identifiers across macOS releases and architectures.
-- Relative accuracy, latency, and memory use compared with `VNRecognizeTextRequest`.
-- Paragraph, table, list, and aggregate-text overlap on real inputs.
-- Reading order for multi-column, RTL, rotated, and nested content.
-- Codable stability across macOS releases.
-
-### Practitioner evidence
-
-An Apple Developer Forums report describes receipt content splitting into separate paragraphs and columns. The thread has no Apple staff resolution, so it is not an API contract, but it is a useful regression fixture category: [RecognizeDocumentsRequest for receipts](https://developer.apple.com/forums/thread/788381).
+**Host:** macOS 26.5.2, arm64; Xcode 26.6 (build 17F113); macOS 26.5 SDK; request revision 1.
 
 On the Xcode 26.6 / macOS 26.5.2 arm64 probe host, `en` succeeds and `en-US` is rejected as unsupported. The request's supported identifiers include regional identifiers for some languages, so callers should not assume two-letter codes are sufficient.
 
 The same host recognizes a generated two-by-two ruled grid as one table with two rows and two columns. This is an observed generated input, not a claim that arbitrary table layouts have stable cross-release semantics.
 
-It also recognizes a generated three-item numbered list as one list with decimal marker metadata and `ALPHA`, `BETA`, and `GAMMA` item text. This is a release-gated conversion test for simple ordered lists, not a general list-layout guarantee.
-
-## Follow-up characterization
-
-The following experiments are required before claiming generalized reading order, native active-request cancellation, or stable cross-release behavior.
-
-1. Compare document and legacy text recognition on fixtures for receipts, small text, multi-column pages, tables, lists, RTL text, rotation, and non-document images.
-2. Sweep `minimumTextHeightFraction` from the documented default to the current legacy-equivalent threshold and record text loss, runtime, and memory.
-3. Record exact language support on supported Intel and Apple Silicon hosts, including BCP-47 regional tags.
-4. Test `Task` cancellation during `perform(on:)`.
-5. Verify candidate ordering, confidence, line and word geometry, and ROI conversion.
-6. Encode representative observations and compare schema stability across supported macOS 26 releases.
+It also recognizes a generated three-item numbered list as one list with decimal marker metadata and `ALPHA`, `BETA`, and `GAMMA` item text. These measurements describe the generated inputs only.
