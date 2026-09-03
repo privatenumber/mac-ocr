@@ -2,7 +2,13 @@ name: Test
 
 on:
   push:
+    branches: [master, beta]
   pull_request:
+
+# A new push to the same ref supersedes the queued/in-progress run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -20,6 +26,15 @@ jobs:
           xcodebuild -version
           swift --version
           xcrun --sdk macosx --show-sdk-version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}-
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Swift tests
         # --no-parallel serializes suites; engine-level unit tests call
