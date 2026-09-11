@@ -8,7 +8,7 @@ mac-ocr ocr <inputs...> [ocr options]      # explicit form (optional)
 mac-ocr searchable-pdf <inputs...> [-o <dest>] [ocr options]
 ```
 
-Inputs are image or PDF paths, `-` for stdin, or `http(s)://` URLs (simple GET — for auth/POST/cookies, fetch upstream and pipe the bytes in; downloads are capped at 100 MiB with a 30 s request / 120 s total timeout). Images can be any format macOS decodes — PNG, JPEG, TIFF, HEIC, GIF, BMP, … Multiple inputs are processed in order. PDFs are detected by content (`%PDF-` magic bytes), not extension, and EXIF orientation is honored — reported `width`/`height` and bounding boxes are in display orientation.
+Inputs are image or PDF paths, `-` for stdin, or `http(s)://` URLs (simple GET — for auth/POST/cookies, fetch upstream and pipe the bytes in; downloads retain at most 100 MiB of response-body data and cancel when a received chunk crosses that cap. URLSession and the network stack can buffer additional bytes. Requests have a 30 s request / 120 s total timeout). Images can be any format macOS decodes — PNG, JPEG, TIFF, HEIC, GIF, BMP, … Multiple inputs are processed in order. PDFs are detected by content (`%PDF-` magic bytes), not extension, and EXIF orientation is honored — reported `width`/`height` and bounding boxes are in display orientation.
 
 ## OCR (default action)
 
