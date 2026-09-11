@@ -73,4 +73,23 @@ setInterval(() => {}, 1000);
 			await operation;
 		}
 	});
+
+	test('keeps a failed spawn typed while collecting stdout', async () => {
+		await using wrapper = await importWrapper();
+		const error = await wrapper.api.createSearchablePdf(Buffer.from('dummy')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect((error as MacOcrError).kind).toBe('spawn');
+	});
+
+	test('keeps a failed exit typed while collecting stdout', async () => {
+		await using wrapper = await importWrapper(`#!/bin/sh
+printf partial
+echo 'Error: expected failure' >&2
+exit 1
+`);
+		const error = await wrapper.api.createSearchablePdf(Buffer.from('dummy')).catch((error_: unknown) => error_);
+		expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+		expect((error as MacOcrError).kind).toBe('runtime');
+		expect((error as MacOcrError).message).toBe('expected failure');
+	});
 });

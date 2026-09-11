@@ -1,4 +1,5 @@
 import childProcess, { type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { buffer } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
 import { MacOcrError, type MacOcrErrorEnvelope, type MacOcrErrorKind } from './errors.ts';
 import type { Input } from './types.ts';
@@ -202,8 +203,9 @@ export const waitForExit = async (spawned: Spawned, label: string): Promise<void
 
 /** Collect stdout to completion, throwing a typed error on a non-zero exit. */
 export const collectStdout = async (spawned: Spawned, label: string): Promise<Buffer> => {
-	const chunks: Buffer[] = [];
-	spawned.proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+	const stdout = buffer(spawned.proc.stdout);
+	// Keep a stream failure handled when the typed process error wins first.
+	stdout.catch(() => {});
 	await waitForExit(spawned, label);
-	return Buffer.concat(chunks);
+	return await stdout;
 };
