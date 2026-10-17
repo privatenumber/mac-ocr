@@ -100,6 +100,8 @@ In dogfooding on a high-resolution five-page scan, partitioned OCR recovered sma
 
 In non-merge mode, pages that already have selectable text are skipped — only scanned pages get OCR. A PDF that needs no OCR at all passes through unchanged. To OCR every page regardless, pass `--ocr-all-pages`. The finer points (what survives a rewrite, how "already has text" is decided) are in [docs/CLI.md](docs/CLI.md#searchable-pdf).
 
+All file destinations, including ordinary and merged output, avoid retaining the complete encoded output PDF in an application-owned memory buffer. Output is finalized and closed in a sibling temporary file, then atomically replaces the destination. Missing parent directories are created. Normal errors remove the temporary file and leave an existing destination untouched before publication; process termination can leave `.<destination-name>.<uuid>.tmp` behind. Debug sidecars are published separately. Stdout and the Node bytes API still buffer the PDF. Page plans, rendering, Vision, and framework caches still consume memory; stdin and URL inputs are still buffered.
+
 In an interactive terminal you get a live `[page/total]` progress counter. Piped or redirected runs are silent on success, so scripts stay clean.
 
 ## Options
@@ -153,7 +155,9 @@ npm install mac-ocr
 
 ```ts
 import fs from 'node:fs/promises'
-import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
+import {
+    ocr, createSearchablePdf, supportedLanguages
+} from 'mac-ocr'
 
 // Recognize text in an image or single-page PDF
 const result = await ocr(await fs.readFile('receipt.jpg'))
@@ -171,9 +175,18 @@ const pages = await Array.fromAsync(ocr.pages(await fs.readFile('book.pdf')))
 const pdf = await createSearchablePdf(await fs.readFile('scan.pdf'), { fast: true })
 await fs.writeFile('scan.ocr.pdf', pdf)
 
-// Recognition languages supported on this macOS version (for ocr and createSearchablePdf)
+// Local file-to-file output (returns void; uses the same PDF options)
+await createSearchablePdf({
+    inputPath: 'scan.pdf',
+    outputPath: 'output/scan.ocr.pdf',
+    fast: true
+})
+
+// Recognition languages supported on this macOS version
 const languages = await supportedLanguages()
 ```
+
+The `createSearchablePdf` file overload requires both paths and takes recognition options and `signal` in the same object. It treats paths literally, relative to the calling process's working directory. It rejects input/output aliases, including symlinks and hard links, to preserve the input. Cancellation rejects after the child closes, but a race with atomic publication can leave a complete new destination. A killed child can leave a sibling temporary file. See [the file API reference](docs/NODE.md#createsearchablepdf-inputpath-outputpath-options-) for details.
 
 Options mirror the CLI flags (like `{ fast: true }` above), plus an `AbortSignal` for cancellation. Failures throw a `MacOcrError` with a `kind` you can branch on. See [docs/NODE.md](docs/NODE.md) for every option, the result types, and error handling.
 

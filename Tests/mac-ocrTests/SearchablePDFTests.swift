@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import ImageIO
 import PDFKit
@@ -56,6 +57,51 @@ import Testing
 		#expect(perPage[0].contains("Page One"))
 		#expect(perPage[1].contains("Page Two"))
 		#expect(perPage[2].contains("Page Three"))
+	}
+
+	@Test func fileRendererHandlesInterruptedAndShortWrites() async throws {
+		let directory = try InputMatrixSupport.makeTempDir("file-sink-short-writes")
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let output = URL(fileURLWithPath: directory + "/out.pdf")
+		var interrupted = false
+		var shortWrites = 0
+		_ = try await VisionGate.shared.withPermit {
+			try await SearchablePDF.renderSource(
+				source: Self.source("hello.png"),
+				destination: .file(
+					output,
+					writeBytes: { fd, buffer, count in
+						if !interrupted {
+							interrupted = true
+							errno = EINTR
+							return -1
+						}
+						shortWrites += 1
+						return Darwin.write(fd, buffer, min(count, 17))
+					}),
+				options: OCROptions(), pdfDpi: 72
+			)
+		}
+		#expect(interrupted)
+		#expect(shortWrites > 1)
+		#expect(try #require(PDFDocument(url: output)).string?.contains("Hello World") == true)
+	}
+
+	@Test func fileRendererRejectsZeroByteWrites() async throws {
+		let directory = try InputMatrixSupport.makeTempDir("file-sink-zero-write")
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		do {
+			_ = try await VisionGate.shared.withPermit {
+				try await SearchablePDF.renderSource(
+					source: Self.source("empty.png"),
+					destination: .file(URL(fileURLWithPath: directory + "/out.pdf"), writeBytes: { _, _, _ in 0 }),
+					options: OCROptions(), pdfDpi: 72
+				)
+			}
+			Issue.record("expected zero-byte write to fail")
+		} catch let error as POSIXError {
+			#expect(error.code == .EIO)
+		}
 	}
 
 	@Test func recognizedWordsExtractAsCleanRuns() async throws {

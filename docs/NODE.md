@@ -12,7 +12,7 @@ import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'
 
 ## Input
 
-Every function takes image or PDF **bytes** — a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, …). Read files or fetch URLs in your own code and pass the bytes; paths and URLs are not accepted as API inputs. Keep the bytes unchanged until the returned Promise settles or async iteration finishes. A non-bytes input throws a `TypeError`.
+`ocr`, `ocr.pages`, and the bytes overload of `createSearchablePdf` take image or PDF **bytes**, a `Buffer`, `Uint8Array`, or `ArrayBuffer`. Images can be any format macOS decodes (PNG, JPEG, TIFF, HEIC, GIF, BMP, etc.). Read files or fetch URLs in your own code and pass the bytes. Keep the bytes unchanged until the returned Promise settles or async iteration finishes. For local file-to-file PDF output, pass an object with `inputPath` and `outputPath` to `createSearchablePdf`.
 
 ```ts
 import fs from 'node:fs/promises'
@@ -56,9 +56,29 @@ await fs.writeFile('scan.ocr.pdf', pdf)
 
 Born-digital pages keep their existing text; image/scanned pages get the layer. A fully born-digital PDF is returned byte-for-byte (annotations, links, form fields, and outlines preserved); when any page needs OCR, the rewrite preserves page content but not annotations or outlines. The full PDF is returned at once (it is not streamed).
 
+## `createSearchablePdf({ inputPath, outputPath, ...options })`
+
+Writes a searchable PDF from a local image/PDF file to a local output file. Returns `Promise<void>` after finalization, closure, and atomic publication. Both paths are required; recognition/PDF options and `signal` belong in the same object. A second options argument is rejected. File-to-bytes and bytes-to-file combinations are not supported.
+
+```ts
+await createSearchablePdf({
+  inputPath: 'scan.pdf',
+  outputPath: 'output/scan.ocr.pdf',
+  ocrStrategy: 'standard',
+})
+```
+
+Both paths must be non-empty strings. Relative paths resolve against the calling process's working directory. Paths are literal: URLs, stdin/stdout sentinels, output templates, and directory-output shorthand have no special meaning. Brackets and spaces are allowed in filenames. Input/output aliases are rejected with `TypeError`, including normalized identical paths and existing symlink/hard-link aliases. Filesystem checks compare device and inode identity and propagate errors other than an absent destination. The caller must not concurrently replace the input or destination during these checks and processing.
+
+Missing parent directories are created. Output is finalized and closed in a unique sibling `.<destination-name>.<uuid>.tmp`, then atomically renamed over the destination. Before publication, failures preserve an existing destination. Normal errors clean up the temporary file; process termination can leave it behind. Completion does not guarantee durability across power failure. Debug sidecars, when enabled, are published separately from the PDF. A debug sidecar that aliases the input is rejected by native validation.
+
+File output avoids retaining the complete encoded output PDF in an application-owned memory buffer. Local PDFs open through a file-backed Core Graphics document. An unchanged, fully searchable PDF is copied byte-for-byte, preserving its metadata; rewritten PDFs have the [same preservation limitations as the CLI](CLI.md#searchable-pdf), including loss of annotations, outlines, and metadata. Page plans/references, rendering, Vision, and framework caches still consume memory. This is not constant memory, bounded total RSS, or zero-copy operation. The bytes API and CLI stdout still buffer output; stdin and URL inputs are not streamed.
+
+A pre-aborted call rejects before starting output work. An active abort terminates the native child and rejects with `MacOcrError` kind `abort` after child closure. Cancellation before publication preserves the previous destination; cancellation racing with the final rename can leave a complete new destination. There is no rollback after publication. Distinct input files remain untouched.
+
 ## `supportedLanguages(options?)`
 
-Lists the recognition languages Vision supports on this macOS version (BCP-47 codes). They apply to both `ocr` and `createSearchablePdf`. Returns `Promise<string[]>`.
+Lists the recognition languages Vision supports on this macOS version (BCP-47 codes). They apply to OCR and both searchable-PDF overloads. Returns `Promise<string[]>`.
 
 ```ts
 const languages = await supportedLanguages()              // accurate recognizer
@@ -67,7 +87,7 @@ const fastLanguages = await supportedLanguages({ fast: true })
 
 ## Options
 
-`ocr`, `ocr.pages`, and `createSearchablePdf` share these (all optional):
+`ocr`, `ocr.pages`, and both `createSearchablePdf` overloads share these (all optional):
 
 | Option | Type | Effect |
 |---|---|---|
@@ -88,7 +108,7 @@ const fastLanguages = await supportedLanguages({ fast: true })
 |---|---|---|
 | `maxCandidates` | `number` | Alternative text candidates per observation (`1`–`10`, default `1`) |
 
-`createSearchablePdf` additionally accepts:
+Both `createSearchablePdf` overloads additionally accept:
 
 | Option | Type | Effect |
 |---|---|---|
@@ -186,9 +206,9 @@ The waiting queue accepts up to 512 calls and a conservative 64 MiB memory budge
 
 Main-thread `ocr()` calls in one Node process share an internal native service. It does not keep Node alive while idle and is replaced after a crash or an unresponsive cancellation. Each Node process has its own service.
 
-Worker-thread calls, `ocr.pages()`, `createSearchablePdf()`, and `supportedLanguages()` run as one-shot processes. Abort and await active worker calls before forcibly terminating a worker, because termination can skip JavaScript cleanup while the one-shot child finishes.
+Worker-thread calls, `ocr.pages()`, both `createSearchablePdf()` overloads, and `supportedLanguages()` run as one-shot processes. Abort and await active worker calls before forcibly terminating a worker, because termination can skip JavaScript cleanup while the one-shot child finishes.
 
-API passwords never enter `argv`: shared `ocr()` calls send them through its internal request stream, while one-shot APIs use `MAC_OCR_PDF_PASSWORD`. Only the active input is written to a private temporary file and it is removed when the operation finishes.
+API passwords never enter `argv`: shared `ocr()` calls send them through its internal request stream, while one-shot APIs use `MAC_OCR_PDF_PASSWORD`. The service stages only its active input in a private temporary file and removes it when the operation finishes. The `createSearchablePdf()` file overload opens the supplied local input directly.
 
 ## Tree-shaking
 

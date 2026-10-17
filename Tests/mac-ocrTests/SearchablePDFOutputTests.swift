@@ -1,6 +1,10 @@
+import Darwin
 import Foundation
 import PDFKit
 import Testing
+
+@testable import MacOcrCLI
+@testable import MacOcrCore
 
 /// Output routing for `searchable-pdf`: per-input by default with a
 /// `[name].ocr.pdf` name, `-o` templates/directories, single-destination
@@ -19,6 +23,105 @@ import Testing
 		#expect(FileManager.default.fileExists(atPath: expected), "expected \(expected); dir: \(listing(directory))")
 		let document = try #require(PDFDocument(url: URL(fileURLWithPath: expected)))
 		#expect((document.string ?? "").contains("Hello World"))
+	}
+
+	@Test func literalFileOutputAndOptionLikeInput() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = directory + "/--input [scan].png"
+		try FileManager.default.copyItem(atPath: TestSupport.fixturePath("hello.png"), toPath: input)
+		let output = directory + "/nested/[name] literal.pdf"
+		let result = try TestSupport.run(["searchable-pdf", "--output-file", output, "--", input])
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(try #require(PDFDocument(url: URL(fileURLWithPath: output))).string?.contains("Hello World") == true)
+		#expect(try Data(contentsOf: URL(fileURLWithPath: input)) == Data(contentsOf: URL(fileURLWithPath: TestSupport.fixturePath("hello.png"))))
+	}
+
+	@Test func literalOutputRejectsConflictingRouting() throws {
+		let input = TestSupport.fixturePath("hello.png")
+		for arguments in [
+			["--output-file", "literal.pdf", "-o", "other.pdf", input],
+			["--output-file", "literal.pdf", "--merge", input],
+			["--output-file", "literal.pdf", input, input],
+			["--output-file", "literal.pdf"],
+		] {
+			#expect(try TestSupport.run(["searchable-pdf"] + arguments).exitCode == 64)
+		}
+	}
+
+	@Test func literalDebugSidecarPreservesInputAliases() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = directory + "/source.jsonl"
+		let original = try Data(contentsOf: URL(fileURLWithPath: TestSupport.fixturePath("hello.png")))
+		try original.write(to: URL(fileURLWithPath: input))
+		try FileManager.default.linkItem(atPath: input, toPath: directory + "/hardlink.jsonl")
+		try FileManager.default.createSymbolicLink(atPath: directory + "/symlink.jsonl", withDestinationPath: input)
+		for name in ["source", "hardlink", "symlink"] {
+			let output = directory + "/\(name).pdf"
+			let result = try TestSupport.run(
+				["searchable-pdf", "--output-file", output, "--", input],
+				environment: ["MAC_OCR_DEBUG": "1"]
+			)
+			#expect(result.exitCode == 64, "stderr: \(result.stderr)")
+			#expect(result.stderr.contains("would overwrite the input file"))
+			#expect(try Data(contentsOf: URL(fileURLWithPath: input)) == original)
+			#expect(!FileManager.default.fileExists(atPath: output))
+		}
+	}
+
+	@Test func ordinaryFailurePreservesDestinationAndRemovesStage() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let input = try stage("invalid.txt", in: directory)
+		let output = directory + "/existing.pdf"
+		let sentinel = Data("previous output".utf8)
+		try sentinel.write(to: URL(fileURLWithPath: output))
+		let result = try TestSupport.run(["searchable-pdf", input, "-o", output])
+		#expect(result.exitCode != 0)
+		#expect(try Data(contentsOf: URL(fileURLWithPath: output)) == sentinel)
+		#expect(try FileManager.default.contentsOfDirectory(atPath: directory).sorted() == ["existing.pdf", "invalid.txt"])
+	}
+
+	@Test func finalizationWriteFailureDoesNotPublish() async throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let output = directory + "/existing.pdf"
+		let sentinel = Data("previous output".utf8)
+		try sentinel.write(to: URL(fileURLWithPath: output))
+		var pagesFinished = false
+		var failedDuringFinalization = false
+		var outputDescriptor: Int32 = -1
+		do {
+			try await VisionGate.shared.withPermit {
+				try await SearchablePDFCommand().writeStagedFile(path: output) { url, _ in
+					_ = try await SearchablePDF.renderSource(
+						source: .file(TestSupport.fixturePath("empty.png")),
+						destination: .file(
+							url,
+							writeBytes: { fd, buffer, count in
+								outputDescriptor = fd
+								if pagesFinished {
+									failedDuringFinalization = true
+									errno = ENOSPC
+									return -1
+								}
+								return Darwin.write(fd, buffer, count)
+							}),
+						options: OCROptions(), pdfDpi: 72,
+						onProgress: { done, total in pagesFinished = done == total }
+					)
+				}
+			}
+			Issue.record("expected file sink error")
+		} catch let error as POSIXError {
+			#expect(error.code == .ENOSPC)
+		}
+		#expect(failedDuringFinalization)
+		#expect(outputDescriptor >= 0)
+		#expect(fcntl(outputDescriptor, F_GETFD) == -1 && errno == EBADF)
+		#expect(try Data(contentsOf: URL(fileURLWithPath: output)) == sentinel)
+		#expect(try FileManager.default.contentsOfDirectory(atPath: directory) == ["existing.pdf"])
 	}
 
 	@Test func multipleInputsEachGetOwnFile() throws {
@@ -292,6 +395,7 @@ import Testing
 		)
 
 		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(try Data(contentsOf: URL(fileURLWithPath: output)) == Data(contentsOf: URL(fileURLWithPath: input)))
 		let records = try jsonlObjects(at: debug)
 		#expect(records.count == 1)
 		for record in records {
@@ -309,6 +413,41 @@ import Testing
 			#expect(pdfPage["rotation"] as? Int == 90)
 			#expect(mediaBox["x"] as? Double == 10)
 			#expect(mediaBox["y"] as? Double == 20)
+		}
+	}
+
+	@Test func residentSearchablePdfPassesThroughToFileAndStdout() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let original = makeBornDigitalPDF()
+		let output = directory + "/resident.pdf"
+		let fileResult = try TestSupport.run(["searchable-pdf", "-", "-o", output], stdinData: original)
+		#expect(fileResult.exitCode == 0, "stderr: \(fileResult.stderr)")
+		#expect(try Data(contentsOf: URL(fileURLWithPath: output)) == original)
+		let stdoutResult = try TestSupport.run(["searchable-pdf", "-", "-o", "-"], stdinData: original)
+		#expect(stdoutResult.exitCode == 0, "stderr: \(stdoutResult.stderr)")
+		#expect(stdoutResult.stdoutData == original)
+	}
+
+	@Test func searchablePdfSymlinkPassThroughCopiesContents() throws {
+		let directory = makeTempDir()
+		defer { try? FileManager.default.removeItem(atPath: directory) }
+		let sourceDirectory = directory + "/source"
+		try FileManager.default.createDirectory(atPath: sourceDirectory, withIntermediateDirectories: true)
+		let originalPath = sourceDirectory + "/original.pdf"
+		let input = sourceDirectory + "/linked.pdf"
+		let original = makeBornDigitalPDF()
+		try original.write(to: URL(fileURLWithPath: originalPath))
+		try FileManager.default.createSymbolicLink(atPath: input, withDestinationPath: "original.pdf")
+		for option in ["-o", "--output-file"] {
+			let output = directory + "/output/\(option).pdf"
+			let result = try TestSupport.run(["searchable-pdf", option, output, "--", input])
+			#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+			let attributes = try FileManager.default.attributesOfItem(atPath: output)
+			#expect(attributes[.type] as? FileAttributeType == .typeRegular)
+			#expect(try Data(contentsOf: URL(fileURLWithPath: output)) == original)
+			#expect(try Data(contentsOf: URL(fileURLWithPath: originalPath)) == original)
+			#expect(try FileManager.default.destinationOfSymbolicLink(atPath: input) == "original.pdf")
 		}
 	}
 

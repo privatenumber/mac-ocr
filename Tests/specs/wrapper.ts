@@ -1,8 +1,11 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { text } from 'node:stream/consumers';
 import { setTimeout } from 'node:timers/promises';
 import { describe, test, expect } from 'manten';
+import { createFixture } from 'fs-fixture';
 import { buildArgs } from '../../src/args.ts';
 import type { MacOcrError } from '../../src/index.ts';
 import { importWrapper } from '../utils.ts';
@@ -100,6 +103,142 @@ describe('wrapper (shim binary)', () => {
 		await using wrapper = await importWrapper(shShim(String.raw`printf '%%PDF- argv=%s' "$*"`));
 		const pdf = await wrapper.api.createSearchablePdf(Buffer.from('x'), { ocrStrategy: 'standard' });
 		expect(Buffer.from(pdf).toString()).toContain('--ocr-strategy standard');
+	});
+
+	test('file mode forwards literal absolute paths and options, with empty stdin', async () => {
+		await using fixture = await createFixture({ '--input [scan].png': 'input' });
+		const reportPath = fixture.getPath('report.json');
+		await using wrapper = await importWrapper(`#!${process.execPath}
+const fs = require('node:fs');
+const chunks = [];
+process.stdin.on('data', chunk => chunks.push(chunk));
+process.stdin.on('end', () => {
+  fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({
+    args: process.argv.slice(2), password: process.env.MAC_OCR_PDF_PASSWORD,
+    errorFormat: process.env.MAC_OCR_ERROR_FORMAT, stdin: Buffer.concat(chunks).toString(),
+  }));
+  process.stdout.write(Buffer.alloc(2 * 1024 * 1024));
+});
+`);
+		const input = path.relative(process.cwd(), fixture.getPath('--input [scan].png'));
+		const output = path.relative(process.cwd(), fixture.getPath('[name] output.pdf'));
+		expect(await wrapper.api.createSearchablePdf({
+			inputPath: input,
+			outputPath: output,
+			password: 'file-password',
+			fast: true,
+			languages: ['en-US'],
+			pdfDpi: 144,
+			ocrAllPages: true,
+			imageQuality: 0.7,
+			imagePageDpi: 300,
+			imageDownsampleDpi: 150,
+			ocrStrategy: 'standard',
+		})).toBeUndefined();
+		expect(await fixture.readJson('report.json')).toStrictEqual({
+			args: [
+				'searchable-pdf',
+				'--fast',
+				'--language',
+				'en-US',
+				'--pdf-dpi',
+				'144',
+				'--ocr-all-pages',
+				'--image-quality',
+				'0.7',
+				'--image-page-dpi',
+				'300',
+				'--image-downsample-dpi',
+				'150',
+				'--ocr-strategy',
+				'standard',
+				'--output-file',
+				path.resolve(output),
+				'--',
+				path.resolve(input),
+			],
+			password: 'file-password',
+			errorFormat: 'json',
+			stdin: '',
+		});
+	});
+
+	test('file mode rejects normalized, symlink and hard-link aliases', async () => {
+		await using fixture = await createFixture({ 'input.pdf': 'original' });
+		const input = fixture.getPath('input.pdf');
+		await fs.symlink(input, fixture.getPath('symlink.pdf'));
+		await fs.link(input, fixture.getPath('hardlink.pdf'));
+		await using wrapper = await importWrapper(shShim('exit 77'));
+		for (const output of [input, `${fixture.path}/./input.pdf`, fixture.getPath('symlink.pdf'), fixture.getPath('hardlink.pdf')]) {
+			await expect(wrapper.api.createSearchablePdf({
+				inputPath: input,
+				outputPath: output,
+			})).rejects.toThrow(TypeError);
+		}
+		expect(await fixture.readFile('input.pdf', 'utf8')).toBe('original');
+	});
+
+	test('rejects malformed or mixed PDF modes before spawning', async () => {
+		await using wrapper = await importWrapper(shShim('exit 77'));
+		for (const arguments_ of [
+			[],
+			[null],
+			['scan.pdf'],
+			[{}],
+			[{ inputPath: 'scan.pdf' }],
+			[{ outputPath: 'out.pdf' }],
+			[{
+				inputPath: '',
+				outputPath: 'out.pdf',
+			}],
+			[{
+				inputPath: 'scan.pdf',
+				outputPath: 123,
+			}],
+			[{
+				inputPath: 'scan.pdf',
+				outputPath: 'out.pdf',
+			}, undefined],
+			[{
+				inputPath: 'scan.pdf',
+				outputPath: 'out.pdf',
+			}, { fast: true }],
+			[Buffer.from('input'), { outputPath: 'out.pdf' }],
+			[Buffer.from('input'), { inputPath: 'scan.pdf' }],
+			[Buffer.from('input'), {}, {}],
+		]) {
+			const operation = Reflect.apply(wrapper.api.createSearchablePdf, undefined, arguments_);
+			await expect(operation).rejects.toThrow(TypeError);
+		}
+	});
+
+	test('file mode propagates unexpected destination stat errors', async () => {
+		await using fixture = await createFixture({
+			'input.pdf': 'original',
+			parent: 'not a directory',
+		});
+		await using wrapper = await importWrapper(shShim('exit 77'));
+		await expect(wrapper.api.createSearchablePdf({
+			inputPath: fixture.getPath('input.pdf'),
+			outputPath: fixture.getPath('parent/output.pdf'),
+		})).rejects.toMatchObject({ code: 'ENOTDIR' });
+	});
+
+	test('file mode preserves native error classifications', async () => {
+		await using fixture = await createFixture({ 'input.pdf': 'input' });
+		for (const [script, kind] of [
+			['echo "Error: cannot render" >&2; exit 1', 'runtime'],
+			['echo "Error: invalid option" >&2; exit 64', 'usage'],
+			['kill -KILL $$', 'runtime'],
+		] as const) {
+			await using wrapper = await importWrapper(shShim(script));
+			const error = await wrapper.api.createSearchablePdf({
+				inputPath: fixture.getPath('input.pdf'),
+				outputPath: fixture.getPath('out.pdf'),
+			}).catch((error_: unknown) => error_);
+			expect(error).toBeInstanceOf(wrapper.api.MacOcrError);
+			expect((error as MacOcrError).kind).toBe(kind);
+		}
 	});
 
 	test('ocr() fails multi-page input from the first page, without waiting', async () => {

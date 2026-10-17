@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreText
+import Darwin
 import Foundation
 import ImageIO
 
@@ -67,6 +68,59 @@ public enum SearchablePDF {
 		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
+		try await renderSource(
+			source: source, destination: .memory, options: options, pdfDpi: pdfDpi, password: password,
+			ocrAllPages: ocrAllPages, imageQuality: imageQuality, imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi, ocrStrategy: ocrStrategy,
+			debugOptions: debugOptions, onWarning: onWarning, onProgress: onProgress
+		)
+	}
+
+	/// Write one source directly to a file. The caller owns atomic publication.
+	public static func write(
+		source: ImageSource,
+		to outputURL: URL,
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String? = nil,
+		ocrAllPages: Bool = false,
+		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil,
+		imageDownsampleDpi: Double? = nil,
+		ocrStrategy: OCRStrategy = .auto,
+		debugOptions: DebugOptions? = nil,
+		onWarning: ((Warning) -> Void)? = nil,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws {
+		_ = try await renderSource(
+			source: source, destination: .file(outputURL), options: options, pdfDpi: pdfDpi, password: password,
+			ocrAllPages: ocrAllPages, imageQuality: imageQuality, imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi, ocrStrategy: ocrStrategy,
+			debugOptions: debugOptions, onWarning: onWarning, onProgress: onProgress
+		)
+	}
+
+	// Internal so failure tests exercise the real renderer with a failing file writer.
+	enum Destination {
+		case memory
+		case file(URL, writeBytes: PDFFileSink.Write = Darwin.write)
+	}
+
+	static func renderSource(
+		source: ImageSource,
+		destination: Destination,
+		options: OCROptions,
+		pdfDpi: Int?,
+		password: String? = nil,
+		ocrAllPages: Bool = false,
+		imageQuality: Double? = nil,
+		imagePageDpi: Double? = nil,
+		imageDownsampleDpi: Double? = nil,
+		ocrStrategy: OCRStrategy = .auto,
+		debugOptions: DebugOptions? = nil,
+		onWarning: ((Warning) -> Void)? = nil,
+		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
+	) async throws -> Data {
 		try validateImageQuality(imageQuality)
 		try validateImageDPI(imagePageDpi, name: "--image-page-dpi")
 		try validateImageDPI(imageDownsampleDpi, name: "--image-downsample-dpi")
@@ -84,76 +138,50 @@ public enum SearchablePDF {
 			imageQuality: imageQuality
 		)
 
-		if case .pdf(let document, _, let originalData) = producer, !ocrAllPages {
-			let pageCount = document.numberOfPages
-			guard pageCount > 0 else {
-				throw MessageError("PDF has no pages: \(source.displayName)")
+		let plans = try pagePlans(for: producer, displayName: source.displayName, ocrAllPages: ocrAllPages)
+		if case .pdf(let document, _, let original) = producer, !plans.contains(where: \.needsOCR) {
+			let pageCount = plans.count
+			if let debugOptions {
+				let debugWriter = try DebugWriter(options: debugOptions)
+				defer { try? debugWriter.close() }
+				try writeSkippedPDFDebugRecords(
+					document: document,
+					source: source,
+					sourceIndex: 1,
+					outputPageOffset: 0,
+					outputPageCount: pageCount,
+					ocrStrategy: ocrStrategy,
+					renderOptions: renderOptions,
+					writer: debugWriter
+				)
 			}
-			var allPagesHaveText = true
-			for pageNumber in 1...pageCount {
-				guard let page = document.page(at: pageNumber) else {
-					throw MessageError("Could not load PDF page \(pageNumber)")
-				}
-				if !pageHasTextLayer(page) {
-					allPagesHaveText = false
-					break
-				}
-			}
-			if allPagesHaveText, let original = originalData() {
-				if let debugOptions {
-					let debugWriter = try DebugWriter(options: debugOptions)
-					defer { try? debugWriter.close() }
-					try writeSkippedPDFDebugRecords(
-						document: document,
-						source: source,
-						sourceIndex: 1,
-						outputPageOffset: 0,
-						outputPageCount: pageCount,
-						ocrStrategy: ocrStrategy,
-						renderOptions: renderOptions,
-						writer: debugWriter
-					)
-				}
-				onProgress?(0, pageCount)
-				onProgress?(pageCount, pageCount)
-				return original
-			}
-		}
-
-		let pdfData = NSMutableData()
-		guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
-			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
-		else {
-			throw MessageError("Could not create PDF output context")
+			onProgress?(0, pageCount)
+			onProgress?(pageCount, pageCount)
+			return try original.complete(to: destination)
 		}
 
 		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
 		defer { try? debugWriter?.close() }
 
-		let pagesWritten = try await appendSource(
-			producer, displayName: source.displayName, options: options, pdfDpi: pdfDpi,
-			ocrAllPages: ocrAllPages, into: context,
-			ocrStrategy: ocrStrategy,
-			debugContext: debugWriter.map {
-				DebugContext(
-					writer: $0,
-					source: source,
-					sourceIndex: 1,
-					outputPageOffset: 0,
-					outputPageCount: nil,
-					renderOptions: renderOptions
-				)
-			},
-			onWarning: onWarning,
-			onProgress: onProgress
-		)
-
-		guard pagesWritten > 0 else {
-			throw MessageError("No pages were produced")
+		return try await render(to: destination) { context, checkError in
+			try await appendSource(
+				producer, options: options, pdfDpi: pdfDpi,
+				plans: plans, into: context, checkError: checkError,
+				ocrStrategy: ocrStrategy,
+				debugContext: debugWriter.map {
+					DebugContext(
+						writer: $0,
+						source: source,
+						sourceIndex: 1,
+						outputPageOffset: 0,
+						outputPageCount: nil,
+						renderOptions: renderOptions
+					)
+				},
+				onWarning: onWarning,
+				onProgress: onProgress
+			)
 		}
-
-		context.closePDF()
-		return pdfData as Data
 	}
 
 	/// Render sources into one searchable PDF in the order they are passed.
@@ -174,38 +202,12 @@ public enum SearchablePDF {
 		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws -> Data {
-		let pdfData = NSMutableData()
-		guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
-			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
-		else {
-			throw MessageError("Could not create PDF output context")
-		}
-
-		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
-		defer { try? debugWriter?.close() }
-
-		let completedPages = try await appendMergedSources(
-			sources: sources,
-			options: options,
-			pdfDpi: pdfDpi,
-			password: password,
-			ocrAllPages: ocrAllPages,
-			imageQuality: imageQuality,
-			imagePageDpi: imagePageDpi,
-			imageDownsampleDpi: imageDownsampleDpi,
-			ocrStrategy: ocrStrategy,
-			into: context,
-			debugWriter: debugWriter,
-			onWarning: onWarning,
-			onProgress: onProgress
+		try await renderMerged(
+			sources: sources, destination: .memory, options: options, pdfDpi: pdfDpi, password: password,
+			ocrAllPages: ocrAllPages, imageQuality: imageQuality, imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi, ocrStrategy: ocrStrategy,
+			debugOptions: debugOptions, onWarning: onWarning, onProgress: onProgress
 		)
-
-		guard completedPages > 0 else {
-			throw MessageError("No pages were produced")
-		}
-
-		context.closePDF()
-		return pdfData as Data
 	}
 
 	public static func writeMerged(
@@ -223,36 +225,79 @@ public enum SearchablePDF {
 		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
 	) async throws {
-		guard let consumer = CGDataConsumer(url: outputURL as CFURL),
-			let context = CGContext(consumer: consumer, mediaBox: nil, nil)
-		else {
-			throw MessageError("Could not create PDF output context")
-		}
+		_ = try await renderMerged(
+			sources: sources, destination: .file(outputURL), options: options, pdfDpi: pdfDpi, password: password,
+			ocrAllPages: ocrAllPages, imageQuality: imageQuality, imagePageDpi: imagePageDpi,
+			imageDownsampleDpi: imageDownsampleDpi, ocrStrategy: ocrStrategy,
+			debugOptions: debugOptions, onWarning: onWarning, onProgress: onProgress
+		)
+	}
 
+	private static func renderMerged(
+		sources: [ImageSource], destination: Destination, options: OCROptions, pdfDpi: Int?,
+		password: String?, ocrAllPages: Bool, imageQuality: Double?, imagePageDpi: Double?,
+		imageDownsampleDpi: Double?, ocrStrategy: OCRStrategy, debugOptions: DebugOptions?,
+		onWarning: ((Warning) -> Void)?, onProgress: ((_ done: Int, _ total: Int) -> Void)?
+	) async throws -> Data {
 		let debugWriter = try debugOptions.map(DebugWriter.init(options:))
 		defer { try? debugWriter?.close() }
 
-		let completedPages = try await appendMergedSources(
-			sources: sources,
-			options: options,
-			pdfDpi: pdfDpi,
-			password: password,
-			ocrAllPages: ocrAllPages,
-			imageQuality: imageQuality,
-			imagePageDpi: imagePageDpi,
-			imageDownsampleDpi: imageDownsampleDpi,
-			ocrStrategy: ocrStrategy,
-			into: context,
-			debugWriter: debugWriter,
-			onWarning: onWarning,
-			onProgress: onProgress
-		)
-
-		guard completedPages > 0 else {
-			throw MessageError("No pages were produced")
+		return try await render(to: destination) { context, checkError in
+			try await appendMergedSources(
+				sources: sources,
+				options: options,
+				pdfDpi: pdfDpi,
+				password: password,
+				ocrAllPages: ocrAllPages,
+				imageQuality: imageQuality,
+				imagePageDpi: imagePageDpi,
+				imageDownsampleDpi: imageDownsampleDpi,
+				ocrStrategy: ocrStrategy,
+				into: context,
+				checkError: checkError,
+				debugWriter: debugWriter,
+				onWarning: onWarning,
+				onProgress: onProgress
+			)
 		}
+	}
 
-		context.closePDF()
+	/// Own the context through finalization, then close the destination. On error,
+	/// cleanup must not replace the original recognition/rendering failure.
+	private static func render(
+		to destination: Destination,
+		append: (CGContext, () throws -> Void) async throws -> Int
+	) async throws -> Data {
+		let data = NSMutableData()
+		let sink: PDFFileSink?
+		let consumer: CGDataConsumer?
+		switch destination {
+		case .memory:
+			sink = nil
+			consumer = CGDataConsumer(data: data as CFMutableData)
+		case .file(let url, let writeBytes):
+			sink = try PDFFileSink(url: url, writeBytes: writeBytes)
+			consumer = sink?.consumer
+		}
+		var context = consumer.flatMap { CGContext(consumer: $0, mediaBox: nil, nil) }
+		guard context != nil else {
+			try? sink?.close()
+			throw MessageError("Could not create PDF output context")
+		}
+		do {
+			try sink?.checkError()
+			let pages = try await append(context!, { try sink?.checkError() })
+			guard pages > 0 else { throw MessageError("No pages were produced") }
+			context?.closePDF()
+			context = nil
+			try sink?.close()
+			return data as Data
+		} catch {
+			context?.closePDF()
+			context = nil
+			try? sink?.close()
+			throw error
+		}
 	}
 
 	private static func appendMergedSources(
@@ -266,6 +311,7 @@ public enum SearchablePDF {
 		imageDownsampleDpi: Double?,
 		ocrStrategy: OCRStrategy,
 		into context: CGContext,
+		checkError: () throws -> Void,
 		debugWriter: DebugWriter?,
 		onWarning: ((Warning) -> Void)? = nil,
 		onProgress: ((_ done: Int, _ total: Int) -> Void)? = nil
@@ -287,6 +333,7 @@ public enum SearchablePDF {
 		onProgress?(0, totalPages)
 		var completedBeforeSource = 0
 		for (index, plan) in plans.enumerated() {
+			try checkError()
 			let renderOptions = DebugRenderOptions(
 				pdfDpi: pdfDpi,
 				imagePageDpi: imagePageDpi,
@@ -302,11 +349,11 @@ public enum SearchablePDF {
 			)
 			let pagesWritten = try await appendSource(
 				producer,
-				displayName: plan.source.displayName,
 				options: options,
 				pdfDpi: pdfDpi,
-				ocrAllPages: ocrAllPages,
+				plans: try pagePlans(for: producer, displayName: plan.source.displayName, ocrAllPages: ocrAllPages),
 				into: context,
+				checkError: checkError,
 				ocrStrategy: ocrStrategy,
 				debugContext: debugWriter.map {
 					DebugContext(
@@ -337,11 +384,30 @@ public enum SearchablePDF {
 		/// `reopen` yields an independent document instance, letting a page
 		/// render on a background task while the main document draws output —
 		/// CGPDFDocument is not thread-safe, so the two paths must not share
-		/// one. `originalData` yields the untouched input bytes for the
-		/// verbatim pass-through when no page needs OCR.
-		case pdf(document: CGPDFDocument, reopen: () -> CGPDFDocument?, originalData: () -> Data?)
+		/// one. `original` retains the backing for unchanged pass-through.
+		case pdf(document: CGPDFDocument, reopen: () -> CGPDFDocument?, original: OriginalPDF)
 		/// A single, orientation-corrected (upright) raster image.
 		case image(ImagePage)
+	}
+
+	private enum OriginalPDF {
+		case file(URL)
+		case bytes(Data)
+
+		func complete(to destination: Destination) throws -> Data {
+			switch (self, destination) {
+			case (.file(let input), .memory):
+				return try Data(contentsOf: input)
+			case (.bytes(let data), .memory):
+				return data
+			case (.file(let input), .file(let output, _)):
+				// copyItem copies a terminal symlink itself, not its PDF contents.
+				try FileManager.default.copyItem(at: input.resolvingSymlinksInPath(), to: output)
+			case (.bytes(let data), .file(let output, _)):
+				try data.write(to: output)
+			}
+			return Data()
+		}
 	}
 
 	private struct ImagePage {
@@ -848,20 +914,34 @@ public enum SearchablePDF {
 		)
 	}
 
-	// TODO: The rewrite below drops annotations (links, form fields),
-	// outlines, and document metadata — only the verbatim pass-through in
-	// `render` preserves them, and that requires *every* page to already have
-	// text. A mixed scanned+digital document loses its annotations on all
-	// pages. A future improvement could transplant annotations onto the
-	// rewritten output via PDFKit (re-add per page after rendering), but
-	// that's lossy and risky (field hierarchies, appearance streams).
+	// Compute displayed CropBox/rotation geometry and text-layer decisions once,
+	// before either pass-through or the page-ordered render loop.
+	private static func pagePlans(for producer: PageProducer, displayName: String, ocrAllPages: Bool) throws -> [PagePlan] {
+		guard case .pdf(let document, _, _) = producer else { return [] }
+		let pageCount = document.numberOfPages
+		guard pageCount > 0 else { throw MessageError("PDF has no pages: \(displayName)") }
+		return try (1...pageCount).map { pageNumber in
+			guard let page = document.page(at: pageNumber) else {
+				throw MessageError("Could not load PDF page \(pageNumber)")
+			}
+			let displayBox = displayBox(for: page)
+			return PagePlan(
+				page: page, pageNumber: pageNumber, displayBox: displayBox,
+				drawingTransform: page.getDrawingTransform(.cropBox, rect: displayBox, rotate: 0, preserveAspectRatio: false),
+				needsOCR: ocrAllPages || !pageHasTextLayer(page)
+			)
+		}
+	}
+
+	// Rewriting preserves visible page content, but drops annotations, outlines,
+	// and document metadata. Only unchanged single-PDF pass-through retains them.
 	private static func appendSource(
 		_ producer: PageProducer,
-		displayName: String,
 		options: OCROptions,
 		pdfDpi: Int?,
-		ocrAllPages: Bool,
+		plans: [PagePlan],
 		into context: CGContext,
+		checkError: () throws -> Void,
 		ocrStrategy: OCRStrategy,
 		debugContext: DebugContext? = nil,
 		onWarning: ((Warning) -> Void)? = nil,
@@ -870,35 +950,6 @@ public enum SearchablePDF {
 		switch producer {
 		case .pdf(let document, let reopen, _):
 			let pageCount = document.numberOfPages
-			guard pageCount > 0 else {
-				throw MessageError("PDF has no pages: \(displayName)")
-			}
-
-			// Plan every page up front (serial, main document): the displayed
-			// geometry — CropBox oriented by /Rotate, with a transform mapping
-			// the original vector content into it so crop/rotation are preserved
-			// — and whether the page needs OCR. Born-digital pages that already
-			// carry selectable text are skipped (adding a layer would duplicate
-			// copy/search text) unless `ocrAllPages` overrides the detection
-			// for hybrid scan-plus-stamp pages.
-			var plans: [PagePlan] = []
-			plans.reserveCapacity(pageCount)
-			for pageNumber in 1...pageCount {
-				guard let page = document.page(at: pageNumber) else {
-					throw MessageError("Could not load PDF page \(pageNumber)")
-				}
-				let displayBox = displayBox(for: page)
-				plans.append(
-					PagePlan(
-						page: page,
-						pageNumber: pageNumber,
-						displayBox: displayBox,
-						drawingTransform: page.getDrawingTransform(
-							.cropBox, rect: displayBox, rotate: 0, preserveAspectRatio: false
-						),
-						needsOCR: ocrAllPages || !pageHasTextLayer(page)
-					))
-			}
 
 			// Rendering is CPU-bound; OCR runs on the serial, ANE-bound Vision
 			// executor. Overlap them: while page N is recognized, page N+1's
@@ -939,6 +990,7 @@ public enum SearchablePDF {
 
 			onProgress?(0, pageCount)
 			for (index, plan) in plans.enumerated() {
+				try checkError()
 				let result: RecognizedPage
 				let ocrImage: DebugImageSize?
 				if plan.needsOCR {
@@ -973,6 +1025,7 @@ public enum SearchablePDF {
 					context.concatenate(plan.drawingTransform)
 					context.drawPDFPage(plan.page)
 				}
+				try checkError()
 				try debugContext?.writer.write(
 					debugRecord(
 						context: debugContext,
@@ -989,6 +1042,7 @@ public enum SearchablePDF {
 			return pageCount
 
 		case .image(let page):
+			try checkError()
 			onProgress?(0, 1)
 			let image = page.image
 			let mediaBox = page.mediaBox
@@ -1006,6 +1060,7 @@ public enum SearchablePDF {
 					))
 				context.drawPDFPage(page.visiblePDFPage)
 			}
+			try checkError()
 			try debugContext?.writer.write(
 				debugRecord(
 					context: debugContext,
@@ -1047,7 +1102,7 @@ public enum SearchablePDF {
 						reopened.map { unlockReopenedPDF($0, password: password) }
 						return reopened
 					},
-					originalData: { try? Data(contentsOf: url) })
+					original: .file(url))
 			}
 			guard let source = CGImageSourceCreateWithURL(url as CFURL, nil)
 			else {
@@ -1116,7 +1171,7 @@ public enum SearchablePDF {
 					reopened.map { unlockReopenedPDF($0, password: password) }
 					return reopened
 				},
-				originalData: { data })
+				original: .bytes(data))
 		}
 		guard let source = CGImageSourceCreateWithData(data as CFData, nil)
 		else {

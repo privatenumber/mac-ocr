@@ -1,5 +1,4 @@
 import childProcess, { type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { MacOcrError, type MacOcrErrorEnvelope, type MacOcrErrorKind } from './errors.ts';
 import type { Input } from './types.ts';
@@ -83,10 +82,24 @@ export const spawnBinary = (
 	proc.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 	proc.stdio[3]?.on('data', (chunk: Buffer) => machineErrorChunks.push(chunk));
 
-	const exit = once(proc, 'close').then(([code, signalName]) => ({
-		code: code as number | null,
-		signal: signalName as NodeJS.Signals | null,
-	}));
+	// An abort emits 'error' before the child closes. Keep ownership until
+	// 'close' so rejection cannot leave an unobserved writer running.
+	const exit = new Promise<ExitStatus>((resolve, reject) => {
+		let processError: Error | undefined;
+		proc.on('error', (error: Error) => {
+			processError ??= error;
+		});
+		proc.once('close', (code, signalName) => {
+			if (processError) {
+				reject(processError);
+			} else {
+				resolve({
+					code,
+					signal: signalName,
+				});
+			}
+		});
+	});
 	exit.catch(() => {});
 
 	// A child that exits before reading all of stdin makes the write end EPIPE;

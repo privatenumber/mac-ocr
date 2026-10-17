@@ -206,6 +206,10 @@ The "already has text" check is page-level: a scanned page carrying one small di
 
 With `--merge`, `-o <file.pdf>` and `-o -` are allowed for multiple inputs. Directory and template outputs are rejected because merged mode writes exactly one PDF.
 
+All file destinations use file-backed output, including default adjacent files, fixed paths, directories, templates, and merged files. The writer avoids retaining the complete encoded output PDF in an application-owned memory buffer. Local PDF input opens through a file-backed Core Graphics document; an unchanged single PDF is copied directly. Stdout output remains buffered, as do stdin and URL inputs. Page plans and references, rasterization, Vision, and framework caches still consume memory; this is not a constant-memory or bounded-RSS guarantee.
+
+The command creates missing parent directories and writes to a unique sibling `.<destination-name>.<uuid>.tmp`. Only after PDF finalization and resource closure does it atomically rename that file over the destination. Before rename, failures leave an existing destination untouched. Normal thrown errors remove temporary output; process termination can leave the temporary file behind. Completion does not promise survival across power failure. A debug PDF and its JSONL sidecar are published separately, not as one atomic transaction. Existing same-path replacement behavior is supported; use distinct input/output paths to retain the source.
+
 Also accepts `--ocr-all-pages` (above), `--ocr-strategy <auto|standard|partitioned>`, `--merge`, `--image-quality <0–1>`, `--image-page-dpi <36–2400>`, `--image-downsample-dpi <36–2400>`, and the recognition options shared with OCR: `--fast`, `--password`, `-l/--language`, `-c/--confidence`, `-w/--custom-words`, `--custom-words-file`, `--no-language-correction`, `--min-text-height`, `--pdf-dpi`, `--roi`.
 
 ### Progress and status

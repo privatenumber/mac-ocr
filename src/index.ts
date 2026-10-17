@@ -1,9 +1,9 @@
 /**
  * `mac-ocr` — OCR and searchable-PDF generation via Apple's Vision framework.
  *
- * The API spawns the bundled CLI binary. Inputs are image or PDF **bytes**
- * (Buffer / Uint8Array / ArrayBuffer); read files or fetch URLs in your own
- * code and pass the bytes.
+ * The API spawns the bundled CLI binary. Byte APIs accept Buffer / Uint8Array /
+ * ArrayBuffer. createSearchablePdf also accepts an options object with literal
+ * local input/output paths and writes file-backed output with atomic replacement.
  *
  * ```ts
  * import { ocr, createSearchablePdf } from 'mac-ocr'

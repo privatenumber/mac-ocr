@@ -38,15 +38,52 @@ import Testing
 		defer { try? FileManager.default.removeItem(atPath: path) }
 		try pdf.write(to: URL(fileURLWithPath: path))
 
-		let output = try await VisionGate.shared.withPermit {
-			try await SearchablePDF.render(source: .file(path), options: OCROptions(), pdfDpi: nil)
+		let output = temporaryPDFPath("rotate-output")
+		defer { try? FileManager.default.removeItem(atPath: output) }
+		try await VisionGate.shared.withPermit {
+			try await SearchablePDF.write(source: .file(path), to: URL(fileURLWithPath: output), options: OCROptions(), pdfDpi: nil)
 		}
-		let document = try #require(PDFDocument(data: output))
+		let document = try #require(PDFDocument(url: URL(fileURLWithPath: output)))
 		let bounds = try #require(document.page(at: 0)).bounds(for: .mediaBox)
 		#expect(
 			Int(bounds.width) == 100 && Int(bounds.height) == 400,
 			"expected 100×400 displayed page (rotation preserved); got \(Int(bounds.width))×\(Int(bounds.height))"
 		)
+	}
+
+	@Test func ordinaryFileOutputPreservesScannedPagesAndInput() throws {
+		let input = TestSupport.fixturePath("multipage.pdf")
+		let original = try Data(contentsOf: URL(fileURLWithPath: input))
+		let output = temporaryPDFPath("scanned-file-output")
+		defer { try? FileManager.default.removeItem(atPath: output) }
+		let result = try TestSupport.run(["searchable-pdf", input, "-o", output, "--ocr-strategy", "standard", "--pdf-dpi", "144"])
+		#expect(result.exitCode == 0, "stderr: \(result.stderr)")
+		#expect(try Data(contentsOf: URL(fileURLWithPath: input)) == original)
+		let source = try #require(PDFDocument(data: original))
+		let document = try #require(PDFDocument(url: URL(fileURLWithPath: output)))
+		#expect(document.pageCount == 3)
+		for (index, text) in ["Page One", "Page Two", "Page Three"].enumerated() {
+			let before = try #require(source.page(at: index))
+			let after = try #require(document.page(at: index))
+			#expect(after.string?.contains(text) == true)
+			#expect(after.bounds(for: .mediaBox) == before.bounds(for: .mediaBox))
+			#expect(try pixels(after) == pixels(before), "appearance changed on page \(index + 1)")
+		}
+	}
+
+	private func pixels(_ page: PDFPage) throws -> Data {
+		let bounds = page.bounds(for: .cropBox)
+		let width = Int(bounds.width)
+		let height = Int(bounds.height)
+		let context = try #require(
+			CGContext(
+				data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+				space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			))
+		context.setFillColor(CGColor(gray: 1, alpha: 1))
+		context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+		page.draw(with: .cropBox, to: context)
+		return Data(bytes: try #require(context.data), count: width * height * 4)
 	}
 
 	// MARK: - Fixture helpers

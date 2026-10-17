@@ -107,7 +107,10 @@ export type OcrOptions = CommonOptions & {
 	maxCandidates?: number;
 };
 
-/** Options for {@link createSearchablePdf}. */
+/**
+ * Recognition/PDF options for both {@link createSearchablePdf} overloads.
+ * File calls wait for child closure on abort; publication can win an abort race.
+ */
 export type SearchablePdfOptions = CommonOptions & {
 
 	/**

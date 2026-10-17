@@ -124,13 +124,14 @@ mac-ocr languages --fast    # fast recognizer's set
 
 ## Node.js API
 
-The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Inputs are **bytes** (Buffer/Uint8Array/ArrayBuffer) — read files or fetch URLs in your own code.
+The package also exposes a typed, promise-based API (`import { ocr, createSearchablePdf, supportedLanguages } from 'mac-ocr'`) backed by the bundled binary. Byte APIs accept Buffer/Uint8Array/ArrayBuffer. Use the `createSearchablePdf` object overload for local file-to-file PDF output.
 
 ```ts
 const { text, observations } = await ocr(bytes)          // single image or single-page PDF
 for await (const page of ocr.pages(pdfBytes)) { /* … */ } // stream multi-page PDF
 const pages = await Array.fromAsync(ocr.pages(pdfBytes))  // …or collect → OcrResult[]
 const pdf = await createSearchablePdf(bytes)                    // → Uint8Array (PDF bytes)
+await createSearchablePdf({ inputPath: 'scan.pdf', outputPath: 'output/scan.ocr.pdf' }) // → void
 const langs = await supportedLanguages()                  // → string[] (ocr + createSearchablePdf)
 ```
 
@@ -138,6 +139,16 @@ const langs = await supportedLanguages()                  // → string[] (ocr +
 - Main-thread `ocr()` calls run one at a time. Avoid an unbounded `Promise.all()` burst, and keep input bytes unchanged until each call settles.
 - Options mirror the CLI: `fast`, `languages`, `confidence`, `customWords`, `languageCorrection` (default true), `minTextHeight`, `maxCandidates` (ocr only), `regionOfInterest` (`{x,y,width,height}` | `[x,y,width,height]` | `"x,y,w,h"`), `pdfDpi`, `ocrStrategy`, `imageQuality`, `imagePageDpi`, and `imageDownsampleDpi` (searchable PDF only), `password`, `signal` (AbortSignal).
 - Failures throw `MacOcrError` with `.kind` (`'usage'`, `'runtime'`, `'unavailable'`, …) and `.stderr`.
+
+### File-backed PDF output
+
+Prefer `createSearchablePdf({ inputPath, outputPath, ...options })` when input and output are local files. Both paths are required; recognition/PDF options and `signal` belong in the same object. It returns `Promise<void>` after finalization, closure, and atomic publication. Do not supply a second options argument or combine byte and file modes. Paths are literal and relative to the calling process's working directory: no URL, stdin/stdout sentinel, directory-output shorthand, or template interpretation. It rejects normalized identical paths and existing symlink/hard-link aliases; do not concurrently replace either path during the call.
+
+All CLI file destinations, ordinary and merged, and the Node file API avoid retaining the complete encoded output PDF in an application-owned memory buffer. Local PDFs open through a file-backed document; unchanged single PDFs copy byte-for-byte. Page plans/references, rendering, Vision, and framework caches still use memory. Do not claim constant memory, bounded RSS, or zero-copy. The bytes API and CLI stdout buffer output; stdin/URL inputs are not streamed. Rewriting still drops annotations, outlines, and metadata as described above.
+
+File output creates missing parent directories and writes a sibling `.<destination-name>.<uuid>.tmp`. Finalized, closed output atomically replaces the destination. Failures before publication preserve the existing destination and normal errors remove the temporary file. Process termination can leave temporary files behind. The PDF and debug sidecar are not one atomic transaction, and completion does not guarantee durability across power failure.
+
+The Node file API rejects pre-aborted calls before output work, and active aborts reject with kind `abort` after child closure. Cancellation racing with publication may leave a complete new destination; do not promise rollback after rename. Distinct input files remain untouched. CLI same-path replacement semantics are unchanged.
 
 ## Patterns
 
